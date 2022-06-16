@@ -7,6 +7,7 @@
 #include <exception>
 #include <iostream>
 #include <memory>
+#include <functional>
 #pragma comment(lib, "bcrypt.lib")
 
 namespace Crypto {
@@ -115,15 +116,17 @@ namespace Crypto {
 			BCryptDestroyHash(hHash);
 		}
 	};
+	
+	
+	static enum SymmetricAlgName { DES, TripleDES };
+	static enum SymmetricAlgMode { ECB, CBC };
+	static enum SymmetricAlgActions { ENCRYPT, DECRYPT };
 
-	/* Обёртка для более простого интерфейса шифрования по алгоритму 3DES */
-	class DES3 {
+	template<SymmetricAlgName algName, SymmetricAlgMode algMode>
+	class SymmetricEncryptionAlgorithm {
 	private:
 		/* Дескриптор алгоритма */
 		BCRYPT_ALG_HANDLE hAlg;
-
-		/* Дескриптор ключа */
-		BCRYPT_KEY_HANDLE hKey;
 
 		/* Размер контекста ключа */
 		DWORD cbKeyObject;
@@ -136,11 +139,18 @@ namespace Crypto {
 
 		/* Указатель на память для контекста ключа */
 		std::unique_ptr<BYTE> pbKeyObject;
+
+		/* Функции шифрования/расшифрования */
+		std::function<NTSTATUS(BCRYPT_KEY_HANDLE, PUCHAR, ULONG, void*, PUCHAR, ULONG, PUCHAR, ULONG, ULONG* pcbResult, ULONG)> algFunctions[2];
+
+		const static LPCWSTR pszAlgName[] = { BCRYPT_DES_ALGORITHM, BCRYPT_3DES_112_ALGORITHM };
+		const static LPCWSTR pszAlgMode[] = { BCRYPT_CHAIN_MODE_ECB, BCRYPT_CHAIN_MODE_CBC };
 	public:
-		/* Инициализируем начальные значения нулями */
-		DES3() : hAlg(nullptr), hKey(nullptr), pbKeyObject() {
+		
+		
+		SymmetricEncryptionAlgorithm() {
 			/* Получаем дескриптор алгоритма шифрования */
-			NTSTATUS ntStatus = BCryptOpenAlgorithmProvider(&hAlg, BCRYPT_3DES_112_ALGORITHM, nullptr, 0);
+			NTSTATUS ntStatus = BCryptOpenAlgorithmProvider(&hAlg, pszAlgName[algName], nullptr, 0);
 			if (!BCRYPT_SUCCESS(ntStatus)) {
 				throw std::exception("Ошибка: не удалось инициализировать алгоритм шифрования");
 			}
@@ -158,63 +168,199 @@ namespace Crypto {
 			}
 
 			/* Меняем режим шифрования на зацепление блоков (CBC) */
-			ntStatus = BCryptSetProperty(hAlg, BCRYPT_CHAINING_MODE, (LPBYTE)BCRYPT_CHAIN_MODE_CBC, sizeof(BCRYPT_CHAIN_MODE_CBC), 0);
+			ntStatus = BCryptSetProperty(hAlg, BCRYPT_CHAINING_MODE, (LPBYTE)pszAlgMode[algMode], sizeof(pszAlgMode[algMode]), 0);
 			if (!BCRYPT_SUCCESS(ntStatus)) {
 				throw std::exception("Ошибка: не удалось изменить тип зацепления блоков шифрования");
 			}
 
 			/* Выделяем память для контекста ключа */
 			pbKeyObject.reset(new BYTE[cbKeyObject]);
+
+			/* Заполняем автоматически функии расшифрования/шифрования, чтобы при смене слов местами */
+			/* Не поменялись местами действия */
+			algFunctions[AlgActions::ENCRYPT] = BCryptEncrypt;
+			algFunctions[AlgActions::DECRYPT] = BCryptDecrypt;
 		}
 
-		/* Низкоуровневая функция шифрования; предполагается, что ключ содержит биты чётности */
-		std::vector<BYTE> encryptData(LPBYTE pbKey, DWORD cbKey, LPBYTE pbData, DWORD cbData) {
-			/* Генерируем ключ шифрования */
-			NTSTATUS ntStatus = BCryptGenerateSymmetricKey(hAlg, &hKey, pbKeyObject.get(), cbKeyObject, pbKey, cbKey, 0);
+		std::vector<BYTE> enc_dec(const std::vector<BYTE>& data, const std::vector<BYTE>& key, AlgActions algAction) {
+			/* Генерируем ключ шифрования; создаём копию, чтобы не поменять данные */
+			std::vector<BYTE> keyCopy(key);
+			
+			BCRYPT_KEY_HANDLE hKey = nullptr;
+			NTSTATUS ntStatus = BCryptGenerateSymmetricKey(hAlg, &hKey, pbKeyObject.get(), cbKeyObject, keyCopy.data(), keyCopy.size(), 0);
 			if (!BCRYPT_SUCCESS(ntStatus)) {
 				std::cerr << "Ошибка: не удалось сгенерировать ключ шифрования" << std::endl;
 				return {};
 			}
 
 			/* Создаём начальный вектор инициализации, заполненный нулями */
-			std::unique_ptr<BYTE> pbIV(new BYTE[cbBlockLen]{ 0 });
+			std::unique_ptr<BYTE> pbIV(algMode == AlgMode::ECB ? nullptr : new BYTE[cbBlockLen]{0});
 
-			/* Копируем шифруемые данные */
-			DWORD cbPlainText = cbData;
-			std::unique_ptr<BYTE> pbPlainText(new BYTE[cbData]);
-			std::memcpy(pbPlainText.get(), pbData, cbData);
-
-			/* Узнаем размер зашифрованных данных */
-			DWORD cbCipherText = 0;
-			ntStatus = BCryptEncrypt(hKey, pbPlainText.get(), cbPlainText, nullptr, pbIV.get(), cbBlockLen, nullptr, 0, &cbCipherText, BCRYPT_BLOCK_PADDING);
+			/* Узнаем размер для выходных данных функии */
+			DWORD cbOutput = 0;
+			std::vector<BYTE> dataCopy(data);
+			ntStatus = algFunctions[algAction](hKey, dataCopy.data(), dataCopy.size(), nullptr, pbIV.get(), cbBlockLen, nullptr, 0, &cbOutput, 0);
 			if (!BCRYPT_SUCCESS(ntStatus)) {
-				std::cerr << "Ошибка: не удалось узнать размер зашифрованных данных" << std::endl;
+				std::cerr << "Ошибка: не удалось узнать размер дешифрованных данных" << std::endl;
+				BCryptDestroyKey(hKey);
 				return {};
 			}
 
-			/* Выделяем место в памяти и выполняем шифрование */
-			std::vector<BYTE> pbCipherText(cbCipherText, 0);
-			ntStatus = BCryptEncrypt(hKey, pbPlainText.get(), cbPlainText, nullptr, pbIV.get(), cbBlockLen, pbCipherText.data(), cbCipherText, &cbData, BCRYPT_BLOCK_PADDING);
+			/* Выполняем непосредственно шифрование/дешифрование */
+			std::vector<BYTE> pbOutput(cbOutput, 0);
+			ntStatus = algFunctions[algAction](hKey, dataCopy.data(), dataCopy.size(), nullptr, pbIV.get(), cbBlockLen, pbOutput.data(), cbOutput, &cbData, 0);
 			if (!BCRYPT_SUCCESS(ntStatus)) {
-				std::cerr << "Ошибка: не удалось выполнить шифрование" << std::endl;
+				std::cerr << "Ошибка: не удалось выполнить дешифрование" << std::endl;
+				BCryptDestroyKey(hKey);
 				return {};
 			}
 
-			return pbCipherText;
-		}
-
-		/* Функция шифрования для работы с контейнерами */
-		std::vector<BYTE> encryptData(std::vector<BYTE> key, std::vector<BYTE> data) {
-			return this->encryptData(key.data(), (DWORD)key.size(), data.data(), (DWORD)data.size());
-		}
-
-		/* Деструктор */
-		~DES3() {
-			/* Закрываем алогоритм шифрования */
-			BCryptCloseAlgorithmProvider(hAlg, 0);
-
-			/* Очищаем ключ; контекст ключа будет очищен самостоятельно */
 			BCryptDestroyKey(hKey);
+			return pbOutput;
+		}
+
+		~SymmetricEncryptionAlgorithm() {
+			BCryptCloseAlgorithmProvider(hAlg, 0);
+		}
+	};
+
+	class RetailMAC {
+	private:
+		/* Дескриптор алгоритма DES */
+		BCRYPT_ALG_HANDLE hAlg;
+
+		/* Дескриптор ключа DES */
+		BCRYPT_KEY_HANDLE hKey;
+
+		/* Размер контекста ключа */
+		DWORD cbKeyObject;
+
+		/* Размер блока шифрования */
+		DWORD cbBlockLen;
+
+		/* Возвращаемое значение из функций Bcrypt */
+		DWORD cbData;
+
+		/* Сама память объекта ключа */
+		std::unique_ptr<BYTE> pbKeyObject;
+		
+		/* Пока не придумал ничего лучше, чем использовать вот такого монстра вместо ~100 строк для шифрования и дешифрования у двух функций */
+		enum DES_ACTION {ENCRYPT, DECRYPT};
+		std::function<NTSTATUS(BCRYPT_KEY_HANDLE, PUCHAR, ULONG, void*, PUCHAR, ULONG, PUCHAR, ULONG, ULONG* pcbResult, ULONG)> desActions[2];
+
+		/* Функция шифрования/дешифрования, режим задаётся перечислением */
+		std::vector<BYTE> DES_enc_dec(std::vector<BYTE> data, std::vector<BYTE> key, DES_ACTION desAction) {
+			/* Генерируем ключ для шифрования/расшифровки */
+			NTSTATUS ntStatus = BCryptGenerateSymmetricKey(hAlg, &hKey, pbKeyObject.get(), cbKeyObject, key.data(), key.size(), 0);
+			if (!BCRYPT_SUCCESS(ntStatus)) {
+				std::cerr << "Ошибка: не удалось сгенерировать ключ шифрования" << std::endl;
+				return {};
+			}
+
+			/* Узнаем размер для выходных данных функии */
+			DWORD cbOutput = 0;
+			std::vector<BYTE> dataCopy(data);
+			ntStatus = desActions[desAction](hKey, dataCopy.data(), dataCopy.size(), nullptr, nullptr, cbBlockLen, nullptr, 0, &cbOutput, 0);
+			if (!BCRYPT_SUCCESS(ntStatus)) {
+				std::cerr << "Ошибка: не удалось узнать размер дешифрованных данных" << std::endl;
+				return {};
+			}
+
+			/* Выполняем непосредственно шифрование/дешифрование */
+			std::vector<BYTE> pbOutput(cbOutput, 0);
+			ntStatus = desActions[desAction](hKey, dataCopy.data(), dataCopy.size(), nullptr, nullptr, cbBlockLen, pbOutput.data(), cbOutput, &cbData, 0);
+			if (!BCRYPT_SUCCESS(ntStatus)) {
+				std::cerr << "Ошибка: не удалось выполнить дешифрование" << std::endl;
+				return {};
+			}
+
+			/* Отдаём результат */
+			return pbOutput;
+		}
+	public:
+		RetailMAC() : hAlg(nullptr), hKey(nullptr), pbKeyObject() {
+			/* Получаем дескриптор алгоритма шифрования */
+			NTSTATUS ntStatus = BCryptOpenAlgorithmProvider(&hAlg, BCRYPT_DES_ALGORITHM, nullptr, 0);
+			if (!BCRYPT_SUCCESS(ntStatus)) {
+				throw std::exception("Ошибка: не удалось инициализировать алгоритм шифрования");
+			}
+
+			/* Узнаем размер контекста для ключа */
+			ntStatus = BCryptGetProperty(hAlg, BCRYPT_OBJECT_LENGTH, (LPBYTE)&cbKeyObject, sizeof(DWORD), &cbData, 0);
+			if (!BCRYPT_SUCCESS(ntStatus)) {
+				throw std::exception("Ошибка: не удалось получить размер шифрующего объекта");
+			}
+
+			/* Узнаем длину блока алгоритма шифрования */
+ 			ntStatus = BCryptGetProperty(hAlg, BCRYPT_BLOCK_LENGTH, (LPBYTE)&cbBlockLen, sizeof(DWORD), &cbData, 0);
+			if (!BCRYPT_SUCCESS(ntStatus)) {
+				throw std::exception("Ошибка: не удалось получить размер блока шифрования");
+			}
+
+			/* Меняем режим шифрования на зацепление блоков (CBC) */
+			ntStatus = BCryptSetProperty(hAlg, BCRYPT_CHAINING_MODE, (LPBYTE)BCRYPT_CHAIN_MODE_ECB, sizeof(BCRYPT_CHAIN_MODE_ECB), 0);
+			if (!BCRYPT_SUCCESS(ntStatus)) {
+				throw std::exception("Ошибка: не удалось изменить тип зацепления блоков шифрования");
+			}
+
+			/* Выделяем память для контекста ключа */
+			pbKeyObject.reset(new BYTE[cbKeyObject]);
+
+			/* Задано так, а не константо при объявлении потому, что ENCRYPT и DECRYPT если кто поменяет местами */
+			/* То может забыть, что и функции надо местами поменять тоже. Так что программа пускай сама расставляет индексы */
+			desActions[DES_ACTION::ENCRYPT] = BCryptEncrypt;
+			desActions[DES_ACTION::DECRYPT] = BCryptDecrypt;
+		}
+
+		/* Вычислить MAC значение */
+		std::vector<BYTE> getMAC(const std::vector<BYTE>& data, const std::vector<BYTE>& key) {
+			/* Если размер ключа не равен 16 байтам, то беда */
+			if (key.size() != 16) {
+				std::cerr << "Ошибка: длина ключа для Retail MAC должна быть равна 16 байтам" << std::endl;
+				return {};
+			}
+			
+			/* Копируем исходные данные в изменяемый вектор */
+			std::vector<BYTE> dataCopy(data);
+
+			/* Заполняем по методу заполнения 2 стандарта ИСО/МЭК 9797-1 */
+			dataCopy.push_back(128); /* Добавляем единичный бит в конец данных, 128 = 0b10000000 */
+
+			/* Заполняем нулями пока не кратно размеру блоку */
+			while (dataCopy.size() % cbBlockLen != 0) {
+				dataCopy.push_back(0);
+			}
+
+			/* Выровняв данные, можно приступать к вычислению MAC */
+			/* Сначала выделим два подключа */
+			std::vector<BYTE> key0(key.begin(), key.begin() + cbBlockLen);
+			std::vector<BYTE> key1(key.begin() + cbBlockLen, key.begin() + 2 * cbBlockLen);
+
+			/* Затем разметим область памяти под временные блоки */
+			std::vector<BYTE> block(cbBlockLen, 0);
+			std::vector<BYTE> output(cbBlockLen, 0);
+
+			/* В цикле обернёмся столько раз, сколько умещается размеров блока в размере выровненных данных */
+			for (size_t i = 0; i < dataCopy.size() / cbBlockLen; i += 1) {
+				/* Копируем часть данных в блок */
+				auto dataBlockBegin = dataCopy.data() + i * cbBlockLen;
+				memcpy(block.data(), dataBlockBegin, cbBlockLen);
+
+				/* Выполняем XOR временного блока данных и выходного блока */
+				for (size_t j = 0; j < block.size(); j += 1) {
+					output[j] = output[j] ^ block[j];
+				}
+
+				/* Проксорив блоки, можно выполнить этап шифрования */
+				output = DES_enc_dec(output, key0, DES_ACTION::ENCRYPT);
+			}
+
+			/* После выполнения всех циклов шифрования, завершающий этап */
+			output = DES_enc_dec(output, key1, DES_ACTION::DECRYPT);
+			output = DES_enc_dec(output, key0, DES_ACTION::ENCRYPT);
+
+			/* И возврат исходных данных */
+			return output;
 		}
 	};
 }
