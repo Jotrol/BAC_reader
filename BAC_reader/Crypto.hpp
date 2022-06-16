@@ -223,7 +223,7 @@ namespace Crypto {
 #ifdef TEST_PARITY
 #include <cassert>
 
-void testParityAdd1() {
+void testParityCorrect1() {
 	std::vector<BYTE> key = { 0xAB, 0x94, 0xFC, 0xED, 0xF2, 0x66, 0x4E, 0xDF };
 	std::vector<BYTE> expected = { 0xAB, 0x94, 0xFD, 0xEC, 0xF2, 0x67, 0x4F, 0xDF };
 	std::vector<BYTE> out(8, 0);
@@ -234,9 +234,31 @@ void testParityAdd1() {
 
 	assert(out == expected);
 }
-void testParityAdd2() {
+void testParityCorrect2() {
 	std::vector<BYTE> key = { 0xB9, 0xB2, 0x91, 0xF8, 0x5D, 0x7F, 0x77, 0xF2 };
 	std::vector<BYTE> expected = { 0xB9, 0xB3, 0x91, 0xF8, 0x5D, 0x7F, 0x76, 0xF2 };
+	std::vector<BYTE> out(8, 0);
+
+	for (size_t i = 0; i < key.size(); i += 1) {
+		out[i] = Crypto::genByteWithParityBit(key[i]);
+	}
+
+	assert(out == expected);
+}
+void testParityCorrect3() {
+	std::vector<BYTE> key = { 0x78, 0x62, 0xD9, 0xEC, 0xE0, 0x3C, 0x1B, 0xCD };
+	std::vector<BYTE> expected = { 0x79, 0x62, 0xD9, 0xEC, 0xE0, 0x3D, 0x1A, 0xCD };
+	std::vector<BYTE> out(8, 0);
+
+	for (size_t i = 0; i < key.size(); i += 1) {
+		out[i] = Crypto::genByteWithParityBit(key[i]);
+	}
+
+	assert(out == expected);
+}
+void testParityCorrect4() {
+	std::vector<BYTE> key = { 0x4D, 0x77, 0x08, 0x9D, 0xCF, 0x13, 0x14, 0x42 };
+	std::vector<BYTE> expected = { 0x4C, 0x76, 0x08, 0x9D, 0xCE, 0x13, 0x15, 0x43 };
 	std::vector<BYTE> out(8, 0);
 
 	for (size_t i = 0; i < key.size(); i += 1) {
