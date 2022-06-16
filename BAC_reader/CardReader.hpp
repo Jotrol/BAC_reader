@@ -50,7 +50,7 @@ public:
 			return {};
 		}
 		while (*pReader != '\0') {
-			int readerNameLen = wcslen(pReader);
+			size_t readerNameLen = wcslen(pReader);
 
 			/* Производим копирование названия во временную строку */
 			wstring tempString = L"";
