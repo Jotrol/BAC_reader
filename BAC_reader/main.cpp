@@ -47,8 +47,8 @@ int encryptingSample() {
 int main() {
 	setlocale(LC_ALL, "rus");
 
-	hashingSample();
-	encryptingSample();
+	//hashingSample();
+	//encryptingSample();
 	
 	return 0;
 }

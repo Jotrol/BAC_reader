@@ -10,6 +10,21 @@
 #pragma comment(lib, "bcrypt.lib")
 
 namespace Crypto {
+	/* Основано на "Алгоритмических трюках хакера" */
+	/* Здесь считается бит чётности от 7 битов, поэтому в конце ещё одно смещение */
+	/* Чётное кол-во единичных битов - 1, нечётное - 0 */
+	unsigned char genByteWithParityBit(unsigned char x) {
+		/* Используя побитовый сдвиг, последний бит выполнят xor со всеми предыдущими, предпоследний - со всеми, кроме последнего и т.д */
+		unsigned char y = x ^ (x >> 1);
+		y = y ^ (y >> 2);
+		y = y ^ (y >> 4);
+
+		/* Здесь освобождаем последний бит исходного числа, а из полученного */
+		/* вытягиваем предпоследний бит (он был xor'ут со всеми, кроме последнего бита) */
+		/* инвертируем его и берём при помощи И последний бит получившегося числа*/
+		return (x & 0xFE) | (~(y >> 1) & 1);
+	}
+
 	/* Обёртка для более простого интерфейса вычисления хэша по алгоритму SHA-1 */
 	class SHA1 {
 	private:
@@ -202,14 +217,32 @@ namespace Crypto {
 			BCryptDestroyKey(hKey);
 		}
 	};
-
-	/* Основано на "Алгоритмических трюках хакера" */
-	/* Здесь считается бит чётности от 7 битов, поэтому в конце ещё одно смещение */
-	unsigned char genByteWithParityBit(unsigned char x) {
-		unsigned char y = x ^ (x >> 1);
-		y = y ^ (y >> 2);
-		y = y ^ (y >> 4);
-		y = y ^ (y >> 7);
-		return (x & 0xFE) | ((y >> 1) & 1);
-	}
 }
+
+/* Тесты из Информативного дополнения 6 части 1 тома 2 документа 9303 */
+#ifdef TEST_PARITY
+#include <cassert>
+
+void testParityAdd1() {
+	std::vector<BYTE> key = { 0xAB, 0x94, 0xFC, 0xED, 0xF2, 0x66, 0x4E, 0xDF };
+	std::vector<BYTE> expected = { 0xAB, 0x94, 0xFD, 0xEC, 0xF2, 0x67, 0x4F, 0xDF };
+	std::vector<BYTE> out(8, 0);
+
+	for (size_t i = 0; i < key.size(); i += 1) {
+		out[i] = Crypto::genByteWithParityBit(key[i]);
+	}
+
+	assert(out == expected);
+}
+void testParityAdd2() {
+	std::vector<BYTE> key = { 0xB9, 0xB2, 0x91, 0xF8, 0x5D, 0x7F, 0x77, 0xF2 };
+	std::vector<BYTE> expected = { 0xB9, 0xB3, 0x91, 0xF8, 0x5D, 0x7F, 0x76, 0xF2 };
+	std::vector<BYTE> out(8, 0);
+
+	for (size_t i = 0; i < key.size(); i += 1) {
+		out[i] = Crypto::genByteWithParityBit(key[i]);
+	}
+
+	assert(out == expected);
+}
+#endif
