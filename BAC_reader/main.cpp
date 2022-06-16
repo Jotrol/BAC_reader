@@ -49,6 +49,7 @@ int main() {
 
 	//hashingSample();
 	//encryptingSample();
+	//testParityCorrect();
 	
 	return 0;
 }
