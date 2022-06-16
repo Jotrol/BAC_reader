@@ -81,12 +81,25 @@ int hashingSample() {
 	delete[] pbHashObject;
 	delete[] pbHash;
 }
+
+/* Основано на "Алгоритмических трюках хакера" */
+/* Здесь считается бит чётности от 7 битов, поэтому в конце ещё одно смещение */
+unsigned char genParityBit(unsigned char x) {
+	unsigned char y = x ^ (x >> 1);
+	y = y ^ (y >> 2);
+	y = y ^ (y >> 4);
+	y = y ^ (y >> 7);
+	return (x & 0xFE) | ((y >> 1) & 1);
+}
 int encryptingSample() {
 	const BYTE plaintext[] = "0123456789ABCDEF";
 	const INT plaintextLen = sizeof(plaintext) - 1;
 
-	const BYTE DESkey[] = {0x0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7, 0x8, 0x9, 0xA, 0xB, 0xC, 0xD, 0xE, 0xF};
+	BYTE DESkey[] = {0x0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7, 0x8, 0x9, 0xA, 0xB, 0xC, 0xD, 0xE, 0xF};
 	const INT DESkeyLen = sizeof(DESkey);
+	for (int i = 0; i < DESkeyLen; i += 1) {
+		DESkey[i] = genParityBit(DESkey[i]);
+	}
 
 	BCRYPT_ALG_HANDLE hTDES = BCRYPT_3DES_112_CBC_ALG_HANDLE;
 	BCRYPT_KEY_HANDLE hKey = nullptr;
