@@ -4,21 +4,21 @@
 #include <Windows.h>
 #include <bcrypt.h>
 
-#include <iostream>
-#include <vector>
-#include <exception>
-#include <memory>
-#include <functional>
-#include <map>
-using namespace std;
-
 #pragma comment(lib, "bcrypt.lib")
+
+#include <map>
+#include <vector>
+#include <memory>
+#include <iostream>
+#include <exception>
+#include <functional>
+using namespace std;
 
 namespace Crypto {
 	/* Основано на "Алгоритмических трюках хакера" */
 	/* Здесь считается бит чётности от 7 битов, поэтому в конце ещё одно смещение */
 	/* Чётное кол-во единичных битов - 1, нечётное - 0 */
-	unsigned char genByteWithParityBit(unsigned char x) {
+	unsigned char getByteWithParityBit(unsigned char x) {
 		/* Используя побитовый сдвиг, последний бит выполнят xor со всеми предыдущими, предпоследний - со всеми, кроме последнего и т.д */
 		unsigned char y = x ^ (x >> 1);
 		y = y ^ (y >> 2);
@@ -28,6 +28,20 @@ namespace Crypto {
 		/* вытягиваем предпоследний бит (он был xor'ут со всеми, кроме последнего бита) */
 		/* инвертируем его и берём при помощи И последний бит получившегося числа*/
 		return (x & 0xFE) | (~(y >> 1) & 1);
+	}
+
+	/* Функция для коррекции битов чётности переданного вектора */
+	vector<BYTE> correctParityBits(const vector<BYTE>& data) {
+		/* Копируем исходные данные */
+		vector<BYTE> dataCopy(data);
+
+		/* Корректируем биты чётности каждого байта */
+		for (size_t i = 0; i < dataCopy.size(); i += 1) {
+			dataCopy[i] = getByteWithParityBit(dataCopy[i]);
+		}
+
+		/* Возвращаем новый вектор */
+		return dataCopy;
 	}
 
 	const enum HashAlgName { SHA1 };
@@ -312,10 +326,7 @@ namespace Crypto {
 void testParityCorrect() {
 	/* Лямбда-функция, которая выполняет тестирование на совпадение откорректированных битов с ожидаемым */
 	auto testParity = [](vector<BYTE> key, vector<BYTE> expected) {
-		for (size_t i = 0; i < key.size(); i += 1) {
-			key[i] = Crypto::genByteWithParityBit(key[i]);
-		}
-		assert(key == expected);
+		assert(correctParityBits(key) == expected);
 	};
 
 	/* Сами прогоны на тестовых данных */
@@ -350,4 +361,29 @@ void testHashingSha1() {
 	testHashing("", { 0xda, 0x39, 0xa3, 0xee, 0x5e, 0x6b, 0x4b, 0x0d, 0x32, 0x55, 0xbf, 0xef, 0x95, 0x60, 0x18, 0x90, 0xaf, 0xd8, 0x07, 0x09 });
 }
 
+/* Тест аутентификации из Информативного дополнения 6 части 1 тома 2 документа 9303  */
+void testAuthProcess() {
+	vector<BYTE> expectedCmdData = { 0x72, 0xC2, 0x9C, 0x23, 0x71, 0xCC, 0x9B, 0xDB, 0x65, 0xB7, 0x79, 0xB8, 0xE8, 0xD3, 0x7B, 0x29, 0xEC, 0xC1, 0x54, 0xAA, 0x56, 0xA8, 0x79, 0x9F, 0xAE, 0x2F, 0x49, 0x8F, 0x76, 0xED, 0x92, 0xF2, 0x5F, 0x14, 0x48, 0xEE, 0xA8, 0xAD, 0x90, 0xA7 };
+
+	Crypto::Sha1 sha1;
+	Crypto::Des3 des3;
+	Crypto::RetailMAC mac;
+
+	vector<BYTE> dEnc = { 0x23, 0x9A, 0xB9, 0xCB, 0x28, 0x2D, 0xAF, 0x66, 0x23, 0x1D, 0xC5, 0xA4, 0xDF, 0x6B, 0xFB, 0xAE, 0x00, 0x00, 0x00, 0x01 };
+	vector<BYTE> dMac = { 0x23, 0x9A, 0xB9, 0xCB, 0x28, 0x2D, 0xAF, 0x66, 0x23, 0x1D, 0xC5, 0xA4, 0xDF, 0x6B, 0xFB, 0xAE, 0x00, 0x00, 0x00, 0x02 };
+
+	vector<BYTE> dEncHash = sha1.getHash(dEnc); dEncHash.resize(16);
+	vector<BYTE> dMacHash = sha1.getHash(dMac); dMacHash.resize(16);
+
+	vector<BYTE> kEnc = Crypto::correctParityBits(dEncHash);
+	vector<BYTE> kMac = Crypto::correctParityBits(dMacHash);
+
+	vector<BYTE> S = { 0x78, 0x17, 0x23, 0x86, 0x0C, 0x06, 0xC2, 0x26, 0x46, 0x08, 0xF9, 0x19, 0x88, 0x70, 0x22, 0x12, 0x0B, 0x79, 0x52, 0x40, 0xCB, 0x70, 0x49, 0xB0, 0x1C, 0x19, 0xB3, 0x3E, 0x32, 0x80, 0x4F, 0x0B };
+	vector<BYTE> eIFD = des3.encrypt(S, kEnc); eIFD.resize(32);
+
+	vector<BYTE> mIFD = mac.getMAC(eIFD, kMac);
+	vector<BYTE> cmdData(eIFD); cmdData.insert(cmdData.end(), mIFD.begin(), mIFD.end());
+
+	assert(cmdData == expectedCmdData);
+}
 #endif
