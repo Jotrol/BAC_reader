@@ -1,4 +1,6 @@
 #include <Windows.h>
+
+#define TEST_PARITY
 #include "Crypto.hpp"
 #include "CardReader.hpp"
 using namespace std;
@@ -47,9 +49,9 @@ int encryptingSample() {
 int main() {
 	setlocale(LC_ALL, "rus");
 
-	//hashingSample();
-	//encryptingSample();
-	//testParityCorrect();
+	hashingSample();
+	encryptingSample();
+	testParityCorrect();
 	
 	return 0;
 }
