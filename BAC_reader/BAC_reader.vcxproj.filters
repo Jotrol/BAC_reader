@@ -26,5 +26,8 @@
     <ClInclude Include="CardReader.hpp">
       <Filter>Заголовочные файлы</Filter>
     </ClInclude>
+    <ClInclude Include="MRZDecoder.hpp">
+      <Filter>Заголовочные файлы</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>
