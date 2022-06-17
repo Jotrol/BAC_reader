@@ -20,8 +20,11 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="MRZDecoder.hpp">
+      <Filter>Заголовочные файлы</Filter>
+    </ClInclude>
     <ClInclude Include="CardReader.hpp">
-      <Filter>Файлы исходного кода</Filter>
+      <Filter>Заголовочные файлы</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>
