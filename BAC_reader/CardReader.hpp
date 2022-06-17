@@ -50,7 +50,7 @@ public:
 			return {};
 		}
 		while (*pReader != '\0') {
-			int readerNameLen = wcslen(pReader);
+			size_t readerNameLen = wcslen(pReader);
 
 			/* Производим копирование названия во временную строку */
 			wstring tempString = L"";
@@ -92,7 +92,7 @@ public:
 	}
 
 	/* Функция отправки команды */
-	Responce SendCommand(LPCBYTE pbCommand, INT pbCommandSize) {
+	Responce SendCommand(vector<BYTE> commandAPDU) {
 		/* Выделение буфера на 256 значений  */
 		DWORD bufferSize = 256;
 		vector<BYTE> buffer(bufferSize);
@@ -101,7 +101,7 @@ public:
 		/* Совершаем попытки считать данные, пока не получится */
 		while (lReturn != SCARD_S_SUCCESS) {
 			/* Пытаемся считать данные */
-			lReturn = SCardTransmit(hCardHandle, SCARD_PCI_T1, pbCommand, pbCommandSize, nullptr, buffer.data(), &bufferSize);
+			lReturn = SCardTransmit(hCardHandle, SCARD_PCI_T1, commandAPDU.data(), commandAPDU.size(), nullptr, buffer.data(), &bufferSize);
 
 			/* Если произошлша ошибка нехватки буфера */
 			if (lReturn == SCARD_E_INSUFFICIENT_BUFFER) {

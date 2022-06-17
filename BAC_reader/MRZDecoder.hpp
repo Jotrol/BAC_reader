@@ -1,5 +1,4 @@
-#pragma once
-
+#include <string>
 #include <sstream>
 #include <vector>
 using namespace std;
@@ -25,7 +24,7 @@ public:
 	}
 
 	vector<unsigned char> ComposeData() {
-		unsigned char dataStr[24] = { 0 };
+		char dataStr[24] = { 0 };
 		memcpy(dataStr, passNumRaw, 10);
 		memcpy(dataStr + 10, birthDate, 7);
 		memcpy(dataStr + 17, expireDate, 7);
