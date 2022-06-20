@@ -29,6 +29,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
 	case WM_PAINT:
 		PAINTSTRUCT ps;
 		HDC hdc = BeginPaint(hwnd, &ps);
+		FillRect(hdc, &ps.rcPaint, (HBRUSH)(COLOR_WINDOW + 1));
 		SetDIBitsToDevice(hdc, 0, 0, fipimage->getWidth(), fipimage->getHeight(), 0, 0, 0, fipimage->getHeight(), fipimage->accessPixels(), &bmi, DIB_RGB_COLORS);
 		EndPaint(hwnd, &ps);
 		return 0;
@@ -42,6 +43,11 @@ LRESULT CALLBACK ParentProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPara
 	case WM_DESTROY:
 		PostQuitMessage(0);
 		return 0;
+	case WM_PAINT:
+		PAINTSTRUCT ps = { 0 };
+		HDC hdc = BeginPaint(hWnd, &ps);
+		FillRect(hdc, &ps.rcPaint, (HBRUSH)(COLOR_WINDOW + 1));
+		EndPaint(hWnd, &ps);
 	}
 	return DefWindowProc(hWnd, message, wParam, lParam);
 }
