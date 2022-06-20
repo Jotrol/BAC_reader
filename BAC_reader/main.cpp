@@ -8,76 +8,57 @@
 #pragma comment(lib, "FreeImagePlus.lib")
 using namespace std;
 
-#include <objidl.h>
-#include <gdiplus.h>
-#include <Shlwapi.h>
-
-using namespace Gdiplus;
-#pragma comment (lib, "Gdiplus.lib")
-#pragma comment (lib, "Shlwapi.lib")
-
-Gdiplus::Bitmap* image = nullptr;
+fipImage fipimage;
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
-    switch (uMsg) {
-    case WM_DESTROY:
-        PostQuitMessage(0);
-        return 0;
-    case WM_PAINT:
-        PAINTSTRUCT ps;
-        HDC hdc = BeginPaint(hwnd, &ps);
-        
-        Graphics graphics(hdc);
-        graphics.DrawImage(image, 0, 0);
+	static BITMAPINFO bmi = { 0 };
+	bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+	bmi.bmiHeader.biWidth = fipimage.getWidth();
+	bmi.bmiHeader.biHeight = fipimage.getHeight();
+	bmi.bmiHeader.biPlanes = 1;
+	bmi.bmiHeader.biCompression = BI_RGB;
+	bmi.bmiHeader.biBitCount = fipimage.getBitsPerPixel();
 
-        EndPaint(hwnd, &ps);
-        return 0;
-    }
+	switch (uMsg) {
+	case WM_DESTROY:
+		PostQuitMessage(0);
+		return 0;
+	case WM_PAINT:
+		PAINTSTRUCT ps;
+		HDC hdc = BeginPaint(hwnd, &ps);
+		SetDIBitsToDevice(hdc, 0, 0, fipimage.getWidth(), fipimage.getHeight(), 0, 0, 0, fipimage.getHeight(), fipimage.accessPixels(), &bmi, DIB_RGB_COLORS);
+		EndPaint(hwnd, &ps);
+		return 0;
+	}
 
-    return DefWindowProc(hwnd, uMsg, wParam, lParam);
+	return DefWindowProc(hwnd, uMsg, wParam, lParam);
 }
 
+#define CLASS_NAME L"Sample Window Class"
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, PSTR pCmdLine, int nCmdShow) {
-    ULONG_PTR token;
-    GdiplusStartupInput input = { 0 };
-    input.GdiplusVersion = 1;
-    GdiplusStartup(&token, &input, NULL);
+	WNDCLASS wc = {};
+	wc.lpfnWndProc = WindowProc;
+	wc.hInstance = hInstance;
+	wc.lpszClassName = CLASS_NAME;
+	RegisterClass(&wc);
 
-    const wchar_t CLASS_NAME[] = L"Sample Window Class";
-    WNDCLASS wc = {};
-    wc.lpfnWndProc = WindowProc;
-    wc.hInstance = hInstance;
-    wc.lpszClassName = CLASS_NAME;
-    RegisterClass(&wc);
+	if (!fipimage.load("FaceImage.jp2")) {
+		MessageBox(nullptr, L"Не загрузилось изображение", L"Ошибка", MB_OK | MB_ICONERROR);
+	}
 
-    fipImage fipimage;
-    if (!fipimage.load("FaceImage.jp2")) {
-        MessageBox(nullptr, L"Не загрузилось изображение", L"Ошибка", MB_OK | MB_ICONERROR);
-    }
+	HWND hwnd = CreateWindow(CLASS_NAME, L"Learn to Program Windows", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, fipimage.getWidth(), fipimage.getHeight() + 38, NULL, NULL, hInstance, NULL);
+	if (!hwnd) {
+		cerr << "Can't create window!" << endl;
+		return 1;
+	}
 
-    HWND hwnd = CreateWindow(CLASS_NAME, L"Learn to Program Windows", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, fipimage.getWidth(), fipimage.getHeight() + 38,NULL,NULL,hInstance,NULL);
-    if (!hwnd) {
-        cerr << "Can't create window!" << endl;
-        GdiplusShutdown(token);
-        return 1;
-    }
+	ShowWindow(hwnd, nCmdShow);
 
-    BITMAPINFO bmi = { 0 };
-    bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    bmi.bmiHeader.biWidth = fipimage.getWidth();
-    bmi.bmiHeader.biHeight = fipimage.getHeight();
-    bmi.bmiHeader.biPlanes = 1;
-    bmi.bmiHeader.biCompression = BI_RGB;
-    bmi.bmiHeader.biBitCount = fipimage.getBitsPerPixel();
-    image = new Gdiplus::Bitmap(&bmi, fipimage.accessPixels());
+	MSG msg;
+	while (GetMessage(&msg, NULL, 0, 0)) {
+		TranslateMessage(&msg);
+		DispatchMessage(&msg);
+	}
 
-    ShowWindow(hwnd, nCmdShow);
-
-    MSG msg;
-    while (GetMessage(&msg, NULL, 0, 0)) {
-        TranslateMessage(&msg);
-        DispatchMessage(&msg);
-    }
-    
-    return 0;
+	return 0;
 }
