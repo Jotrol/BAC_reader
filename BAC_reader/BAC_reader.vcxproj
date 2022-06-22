@@ -148,7 +148,9 @@
     <ClInclude Include="CardReader.hpp" />
     <ClInclude Include="Crypto.hpp" />
     <ClInclude Include="FreeImage.h" />
+    <ClInclude Include="ImageContainer.hpp" />
     <ClInclude Include="MRZDecoder.hpp" />
+    <ClInclude Include="Util.hpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
