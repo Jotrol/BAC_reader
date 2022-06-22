@@ -9,6 +9,7 @@
 
 #include <fstream>
 #include <memory>
+#include <sstream>
 using namespace std;
 
 #define IS_LITTLE_ENDIAN  ('ABCD'==0x41424344UL) //41 42 43 44 = 'ABCD' hex ASCII code
@@ -170,38 +171,6 @@ using namespace std;
 //}
 
 
-/* ƒл€ декодировани€ заголовоков изображени€ используетс€ стандарт ISO/IEC 19794-5-2006, а не 2013 */
-class Image_ISO19794_5_2006 {
-
-};
-
-#pragma pack(push, 1)
-struct FaceImageHeader {
-	BYTE formatID[4];
-	BYTE standartNum[4];
-	UINT32 entryLen;
-	UINT16 facesCount;
-};
-struct FaceInformation {
-	UINT32 faceDataLen;
-	UINT16 controlPointsCount;
-	BYTE sex;
-	BYTE eyesColor;
-	BYTE hairColor;
-	BYTE propertyMask[3];
-	UINT16 faceLook;
-	BYTE angleCoords[3];
-	BYTE angleCoordsError[3];
-};
-struct ControlPoint {
-	BYTE controlPointType;
-	BYTE controlPointCode;
-	UINT16 coordX;
-	UINT16 coordY;
-	UINT16 coordZ;
-};
-
-/* TODO: дописать разбор заголовка изображени€ */
 /* TODO: специализировать шаблоны */
 /* ‘ункци€ разворота байтов; пока сво€, позже специализирую шаблон на все встречающиес€ типы встроенными в MSVC функци€ми */
 template<typename T>
@@ -219,79 +188,132 @@ T changeEndiannes(T val) {
 	return out;
 }
 
-FaceImageHeader readFaceImageHeader(ifstream& file) {
-	FaceImageHeader faceImageHeader = { 0 };
-	file.read((char*)&faceImageHeader, sizeof(FaceImageHeader));
+/* ƒл€ декодировани€ заголовоков изображени€ используетс€ стандарт ISO/IEC 19794-5-2006, а не 2013 */
+class Image_ISO19794_5_2006 {
+private:
+#pragma pack(push, 1)
+	struct FaceImageHeader {
+		BYTE formatID[4];
+		BYTE standartNum[4];
+		UINT32 entryLen;
+		UINT16 facesCount;
+	};
+	struct FaceInformation {
+		UINT32 faceDataLen;
+		UINT16 controlPointsCount;
+		BYTE sex;
+		BYTE eyesColor;
+		BYTE hairColor;
+		BYTE propertyMask[3];
+		UINT16 faceLook;
+		BYTE angleCoords[3];
+		BYTE angleCoordsError[3];
+	};
+	struct ControlPoint {
+		BYTE controlPointType;
+		BYTE controlPointCode;
+		UINT16 coordX;
+		UINT16 coordY;
+		UINT16 coordZ;
+	};
+	struct ImageInfo {
+		BYTE imageTypeInfo;
+		BYTE imageDataType;
+		UINT16 imageHorizontalSize;
+		UINT16 imageVerticalSize;
+		BYTE imageColorSpace;
+		BYTE imageSourceInfo;
+		UINT16 imageCaptureType;
+		UINT16 imageQuality;
+	};
+#pragma pack(pop)
 
-	faceImageHeader.entryLen = changeEndiannes(faceImageHeader.entryLen);
-	faceImageHeader.facesCount = changeEndiannes(faceImageHeader.facesCount);
+	FaceImageHeader readFaceImageHeader(ifstream& file) {
+		FaceImageHeader faceImageHeader = { 0 };
+		file.read((char*)&faceImageHeader, sizeof(FaceImageHeader));
 
-	return faceImageHeader;
-}
-FaceInformation readFaceInformation(ifstream& file) {
-	FaceInformation faceInfo = { 0 };
-	file.read((char*)&faceInfo, sizeof(FaceInformation));
+		faceImageHeader.entryLen = changeEndiannes(faceImageHeader.entryLen);
+		faceImageHeader.facesCount = changeEndiannes(faceImageHeader.facesCount);
 
-	faceInfo.faceDataLen = changeEndiannes(faceInfo.faceDataLen);
-	faceInfo.controlPointsCount = changeEndiannes(faceInfo.controlPointsCount);
-	faceInfo.faceLook = changeEndiannes(faceInfo.faceLook);
+		return faceImageHeader;
+	}
+	FaceInformation readFaceInformation(ifstream& file) {
+		FaceInformation faceInfo = { 0 };
+		file.read((char*)&faceInfo, sizeof(FaceInformation));
 
-	return faceInfo;
-}
-vector<ControlPoint> readControlPoints(ifstream& file, UINT16 controlPointsCount) {
-	vector<ControlPoint> controlPoints(controlPointsCount);
+		faceInfo.faceDataLen = changeEndiannes(faceInfo.faceDataLen);
+		faceInfo.controlPointsCount = changeEndiannes(faceInfo.controlPointsCount);
+		faceInfo.faceLook = changeEndiannes(faceInfo.faceLook);
 
-	ControlPoint point = { 0 };
-	for (int i = 0; i < controlPointsCount; i += 1) {
-		file.read((char*)&point, sizeof(ControlPoint));
+		return faceInfo;
+	}
+	vector<ControlPoint> readControlPoints(ifstream& file, UINT16 controlPointsCount) {
+		vector<ControlPoint> controlPoints(controlPointsCount);
 
-		point.coordX = changeEndiannes(point.coordX);
-		point.coordY = changeEndiannes(point.coordY);
-		point.coordZ = changeEndiannes(point.coordZ);
+		ControlPoint point = { 0 };
+		for (int i = 0; i < controlPointsCount; i += 1) {
+			file.read((char*)&point, sizeof(ControlPoint));
 
-		controlPoints.push_back(point);
+			point.coordX = changeEndiannes(point.coordX);
+			point.coordY = changeEndiannes(point.coordY);
+			point.coordZ = changeEndiannes(point.coordZ);
+
+			controlPoints.push_back(point);
+		}
+
+		return controlPoints;
+	}
+	ImageInfo readImageInfo(ifstream& file) {
+		ImageInfo imgInfo = { 0 };
+		file.read((char*)&imgInfo, sizeof(ImageInfo));
+
+		imgInfo.imageHorizontalSize = changeEndiannes(imgInfo.imageHorizontalSize);
+		imgInfo.imageVerticalSize = changeEndiannes(imgInfo.imageVerticalSize);
+		imgInfo.imageCaptureType = changeEndiannes(imgInfo.imageCaptureType);
+		imgInfo.imageQuality = changeEndiannes(imgInfo.imageQuality);
+
+		return imgInfo;
 	}
 
-	return controlPoints;
-}
+	UINT32 imgDataSize;
+	unique_ptr<BYTE> imgData;
+	vector<ControlPoint> imgControlPoints;
 
-#pragma pack(pop)
+	FaceImageHeader faceImageHeader;
+	FaceInformation faceInformation;
+	ImageInfo imageInfo;
+public:
+	Image_ISO19794_5_2006(ifstream& file) {
+		faceImageHeader = readFaceImageHeader(file);
+
+		streampos faceInfoStart = file.tellg();
+		faceInformation = readFaceInformation(file);
+		imgControlPoints = readControlPoints(file, faceInformation.controlPointsCount);
+		imageInfo = readImageInfo(file);
+
+		/* —читаем размер данних о лице с заголовком и вычитаем из ожидаемого размера */
+		imgDataSize = faceInformation.faceDataLen - (file.tellg() - faceInfoStart);
+
+		/* ¬ыдел€ем пам€ть под данные изображени€ и считываем его */
+		imgData.reset(new BYTE[imgDataSize]);
+		file.read((char*)imgData.get(), imgDataSize);
+	}
+
+	BYTE* getRawImage() {
+		return imgData.get();
+	}
+	UINT32 getRawImageSize() {
+		return imgDataSize;
+	}
+};
 
 int main() {
 	ifstream file("EncodedPhotoSmirnova.bin", ios::binary | ios::in);
-	FaceImageHeader faceImageHeader = readFaceImageHeader(file);
-	FaceInformation faceInfo = readFaceInformation(file);
-	vector<ControlPoint> controlPoints = readControlPoints(file, faceInfo.controlPointsCount);
+	Image_ISO19794_5_2006 image(file);
 
-
-	file.close();
-
-	//BYTE faceImageBlockLen[4] = { 0 };
-	//file.read((char*)faceImageBlockLen, 4);
-
-	//UINT32 blockLen = (faceImageBlockLen[0] << 24) | (faceImageBlockLen[1] << 16) | (faceImageBlockLen[2] << 8) | (faceImageBlockLen[3] << 0);
-	//streampos imageBlockStart = file.tellg();
-
-	//BYTE tmp[2] = { 0 };
-	//file.read((char*)tmp, 2);
-	//file.seekg(14, ios::cur);
-	//
-	//UINT16 numPP = (tmp[0] << 8) | (tmp[1]);
-	//file.seekg(numPP * 8, ios::cur);
-	//file.seekg(1, ios::cur);
-
-	//BYTE imgType = file.get();
-	//file.seekg(10, ios::cur);
-
-	//streampos faceImageBlockEnd = file.tellg();
-	//UINT32 photoLen = blockLen - (faceImageBlockEnd - imageBlockStart) - 4;
-
-	//unique_ptr<BYTE> photo(new BYTE[photoLen]{0});
-	//file.read((char*)photo.get(), photoLen);
-	//file.close();
-
-	//ofstream photoFile("fotka.jpg", ios::binary | ios::out);
-	//photoFile.write((char*)photo.get(), photoLen);
-	//photoFile.close();
+	ofstream photoFile("photo.jpg", ios::binary | ios::out);
+	photoFile.write((char*)image.getRawImage(), image.getRawImageSize());
+	photoFile.close();
+	
 	return 0;
 }
