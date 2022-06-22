@@ -6,45 +6,47 @@
 #include "BerTLV.hpp"
 
 #include <fstream>
+#include <sstream>
 using namespace std;
 
 //INT WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrevInst, LPSTR lpCmdLine, INT nCmdShow) {
 int main() {
-	srand(time(NULL));
-	setlocale(LC_ALL, "rus");
+	setlocale(LC_ALL, "RUS");
 
+	/* Открываем поток байтов и узнаем его размер */
 	ifstream file("Datagroup2.bin", ios::binary | ios::ate);
-	size_t file_size = file.tellg();
-	vector<BYTE> fileData(file_size, 0);
-	file.seekg(ios::beg);
-	file.read((char*)fileData.data(), file_size);
-	file.close();
+	UINT32 fileSize = file.tellg();
+	file.seekg(0);
 
-	BerTLV ber = BerTLV::decodeBerTLV(fileData);
-	auto root = ber.findChild(0x7f61);
-	if (!root) {
-		cerr << "Tag 0x7f61 not found" << endl;
-		return 0;
+	/* Выполняем декодирование */
+	BerTLV::BerTLVDecoder decoder;
+	UINT16 rootIndex = decoder.decode(file);
+
+	/* Выполняем поиск требуемых тегов */
+	UINT16 tag0x7F61 = decoder.getChildByTag(rootIndex, 0x7F61);
+	if (tag0x7F61 == 0) {
+		cerr << "Нет тега 0x7F61" << endl;
+		return 1;
 	}
 
-	auto group = root->findChild(0x7f60);
-	if (!group) {
-		cerr << "Tag 0x7f60 not found" << endl;
-		return 0;
+	UINT16 tag0x7F60 = decoder.getChildByTag(tag0x7F61, 0x7F60);
+	if (tag0x7F60 == 0) {
+		cerr << "Нет тега 0x7F60" << endl;
+		return 1;
 	}
 
-	auto photo = group->findChild(0x5F2E);
-	if (!photo) {
-		cerr << "Tag 0x5F2E not found" << endl;
-		return 0;
+	UINT16 tag0x5F2E = decoder.getChildByTag(tag0x7F60, 0x5F2E);
+	if (tag0x5F2E == 0) {
+		cerr << "Нет тега 0x5F2E" << endl;
+		return 1;
 	}
 
-	auto& photoData = photo->getValue();
-
-	cout << "Encoded photo found!" << endl;
-	ofstream outPhoto("EncodedPhoto.bin", ios::binary | ios::out);
-	outPhoto.write((char*)photoData.data(), photoData.size());
-	outPhoto.close();
+	BerTLV::BerTLVDecoderToken* imageToken = decoder.getTokenPtr(tag0x5F2E);
+	auto dataImage = imageToken->getData(file);
+	
+	ofstream dataFile("data.bin", ios::binary);
+	dataFile.write((char*)dataImage.get(), imageToken->getDataLen());
+	dataFile.close();
 
 	return 0;
 }

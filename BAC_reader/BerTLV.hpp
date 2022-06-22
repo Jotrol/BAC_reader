@@ -1,172 +1,262 @@
 #pragma once
-#include <optional>
-#include <vector>
 
-class BerTLV {
-public:
-	enum class TagClass {
-		UNIVERSAL,
-		APPLICATION,
-		CONTEXT_SPECIFIC,
-		PRIVATE
-	};
+#include <windef.h>
+#include <iosfwd>
+using namespace std;
 
-	enum class TagType
-	{
-		PRIMITIVE,
-		CONSTRUCTED
-	};
+namespace BerTLV {
+	/* Класс токена одного BER-TLV тега */
+	class BerTLVDecoderToken {
+	private:
+		/* Классы тега */
+		enum class BerTagClass { UNIVERSAL, APPLICATION, CONTEXT_SPECIFIC, PRIVATE };
 
-	static BerTLV decodeBerTLV(const std::vector<unsigned char>& rawData) {
-		size_t currentReadIndex = 0;
-		return BerTLV(rawData, currentReadIndex);
-	}
+		/* Тип тега */
+		enum class BerTagType { PRIMITIVE, CONSTRUCTED };
 
-	size_t getLength() const {
-		return berLen;
-	}
+		/* Пару typedef'ов, чтобы было удобней */
+		typedef tuple<BerTagClass, BerTagType, UINT64> BerTagTuple;
+		typedef tuple<UINT32, UINT32> BerLenTuple;
 
-	size_t getTag() const {
-		return berTag;
-	}
+		/* Тег токена */
+		UINT64 berTag;
 
-	const std::vector<unsigned char>& getValue() const {
-		return berValue;
-	}
+		/* Длина тега */
+		UINT32 berLen;
+		
+		/* Смещение данных тега внутри потока */
+		UINT32 berDataStart;
 
-	std::optional<BerTLV> findChild(size_t tag) const {
-		for (auto& child : childrenTlvs) {
-			if (child.berTag == tag) {
-				return child;
-			}
-		}
+		/* Класс тега */
+		BerTagClass berTagClass;
 
-		return std::nullopt;
-	}
+		/* Тип тега */
+		BerTagType berTagType;
 
-	/* Может быть понадобится функция а-ля findAll(tag) */
+		/* Индекс родителя тега */
+		UINT16 berParentIndex;
 
-	std::vector<BerTLV>& getChildren() {
-		return childrenTlvs;
-	}
+		/* Функция получения тега */
+		BerTagTuple decodeTag(istream& stream) {
+			/* Сначала получаем байт тега */
+			UINT8 firstByte = stream.get();
 
-private:
-	size_t berTag;
-	size_t berLen;
-	std::vector<unsigned char> berValue;
+			/* Определяем класс и тип тега */
+			BerTagClass berTagClassRaw = (BerTagClass)((firstByte >> 6) & 0x03);
+			BerTagType berTagTypeRaw = (BerTagType)((firstByte >> 5) & 0x01);
 
-	bool isValidTlv = true;
-	bool hasMoreAfterVal = false;
+			/* Получаем сам номер тега */
+			UINT64 berTagRaw = firstByte;
 
-	TagClass berTagClass = TagClass::UNIVERSAL;
-	TagType berTagType = TagType::PRIMITIVE;
-	std::vector<BerTLV> childrenTlvs;
+			/* Если 5 бит тега не равны единицам - то это единственный тег */
+			if ((firstByte & 0x1F) == 0x1F) {
+				/* Иначе, надо получить полный номер тега */
+				for (UINT i = 0; i < 8; i += 1) {
+					/* Получаем очередной байт тега */
+					UINT8 tagNum = stream.get();
 
-	BerTLV(const std::vector<unsigned char>& rawData, size_t& currentReadIndex) {
-		std::tuple<TagClass, TagType, size_t> berTagTuple = decodeTag(rawData, currentReadIndex);
+					/* Записываем его в итоговое число тега */
+					berTagRaw = (berTagRaw << 8) | tagNum;
 
-		berTagClass = std::get<0>(berTagTuple);
-		berTagType = std::get<1>(berTagTuple);
-		berTag = std::get<2>(berTagTuple);
-
-		berLen = decodeLength(rawData, currentReadIndex);
-		if (berLen == 0) {
-			throw "Почему-то длина BER-TLV равна нулю";
-		}
-
-		if (berTagType == TagType::CONSTRUCTED) {
-			childrenTlvs = decodeChildrenTags(rawData, currentReadIndex);
-		}
-		else {
-			auto start = rawData.begin() + currentReadIndex;
-			berValue.resize(berLen);
-			std::copy(start, start + berLen, berValue.begin());
-			currentReadIndex += berLen;
-		}
-	}
-
-	std::tuple<TagClass, TagType, size_t> decodeTag(const std::vector<unsigned char>& tlvRaw, size_t& currentReadIndex) {
-		/* Считываем перый байт последовательности */
-		const unsigned char firstByte = tlvRaw[currentReadIndex];
-		currentReadIndex += 1;
-
-		/* Выделяем 2 старших бита - это класс тега */
-		const int tagClassBits = (firstByte >> 6) & 0x03;
-
-		/* Получаем бит типа тега: либо он простой, либо составной */
-		const int tagTypeBit = (firstByte >> 5) & 0x01;
-
-
-		/* Получаем значение номера тега в первом байте */
-		size_t tagNumber = firstByte;
-
-		/* Проверяем, не равны ли все биты номера тега числу 0x1F */
-		if ((tagNumber & 0x1F) == 0x1F) {
-			/* Считываем все байты тега (не больше ~ 8 байт, иначе числовой тип переполнится) */
-			for (; currentReadIndex < tlvRaw.size();) {
-				/* Добавим в список байтов новый байт */
-				/* Старший бит будет не учитываться при подсчёте */
-				unsigned char tagNum = tlvRaw[currentReadIndex] & 0xFF;
-				currentReadIndex += 1;
-
-				/* Сместим влево уже записанный тег на 8 бит и допишем байт в конец */
-				tagNumber = (tagNumber << 8) | tagNum;
-
-				/* Если это был последний байт тега - остановка */
-				if (((tagNum >> 7) & 0x1) == 0) {
-					break;
+					/* Смотрим, установлен ли старший бит, если нет - это конец номера тега */
+					if (((tagNum >> 7) & 0x01) == 0) { i = 8; }
 				}
 			}
+
+			/* Агрегируем данные в неизменяемый многотиповой массив - tuple */
+			return make_tuple(berTagClassRaw, berTagTypeRaw, berTagRaw);
 		}
 
-		/* Значение tagClassBits будут в пределах между 0 и 3, так что за пределы не выйдем */
-		/* Здесь просто пропускаются много if-ов, так будет быстрее */
-		/* То же самое можно сделать и с tagType */
-		return std::make_tuple((TagClass)tagClassBits, (TagType)tagTypeBit, tagNumber);
-	}
+		/* Функция получения  */
+		BerLenTuple decodeLength(istream& stream) {
+			/* Считываем первый байт длины */
+			UINT8 firstByte = stream.get();
 
-	size_t decodeLength(const std::vector<unsigned char>& tlvRaw, size_t& currentReadIndex) {
-		/* Проверка того, что декодер не вышел за пределы размеров исходных данных */
-		if (currentReadIndex >= tlvRaw.size()) {
+			/* Если в первом байте длины установлен старший бит */
+			/* То длина продолжается в других байтах */
+			/* Кол - во равно первому байту(без старшего бита) */
+			UINT64 berLenRaw = firstByte;
+			if ((firstByte & 0x80) == 0x80) {
+				/* Получаем кол-во байтов длины */
+				UINT8 lenBytes = (firstByte & 0x7F);
+
+				/* Пусть максимально можно будет задать 4 байта длиной */
+				if (lenBytes >= sizeof(berLen)) {
+					throw std::exception("Ошибка: длина данных больше, чем тип, способный её уместить");
+				}
+
+				/* Добавляем эти байты, пока не дошли до нуля */
+				berLenRaw = 0;
+				for (UINT8 i = 0; i < lenBytes; i += 1) {
+					berLenRaw = (berLenRaw << 8) | (UINT8)stream.get();
+				}
+			}
+
+			/* Агрегируем начало длину данных тега */
+			return make_tuple(stream.tellg(), berLenRaw);
+		}
+
+	public:
+		BerTLVDecoderToken() = default;
+
+		BerTLVDecoderToken(istream& stream, UINT16 parentIdx) {
+			/* Декодируем тег */
+			BerTagTuple tagTuple = decodeTag(stream);
+
+			/* Декодируем длину данных */
+			BerLenTuple lenTuple = decodeLength(stream);
+
+			/* Присваиваем всю информацию */
+			berTagClass = get<0>(tagTuple);
+			berTagType = get<1>(tagTuple);
+			berTag = get<2>(tagTuple);
+
+			berDataStart = get<0>(lenTuple);
+			berLen = get<1>(lenTuple);
+
+			berParentIndex = parentIdx;
+
+			/* Если это не составной тег, то его данные можно пропустить */
+			if (berTagType == BerTagType::PRIMITIVE) {
+				stream.seekg(berLen, ios::cur);
+			}
+		}
+
+		/* Проверка на то, что тег составной */
+		bool isConstructed() { return berTagType == BerTagType::CONSTRUCTED; };
+
+		/* Получить тег */
+		UINT64 getTag() { return berTag; }
+
+		/* Получить начало данных */
+		UINT32 getDataStart() { return berDataStart; }
+
+		/* Получить длину данных */
+		UINT32 getDataLen() { return berLen; }
+
+		/* Получить родителя тега */
+		UINT16 getParent() { return berParentIndex; }
+
+		/* Функция для получения данных тега */
+		unique_ptr<UINT8> getData(istream& stream) {
+			stream.seekg(berDataStart);
+
+			unique_ptr<UINT8> data(new UINT8[berLen]);
+			stream.read((char*)data.get(), berLen);
+			return data;
+		}
+
+		/* В теории, можно сделать класс декодера дружественным этому */
+		/* Чтобы избежать лишних функций */
+	};
+
+	/* Класс декодировщика BER-TLV данных */
+	class BerTLVDecoder {
+	private:
+		/* Функция декодирования, которая вызывается типа рекурсивно */
+		UINT16 decode(istream& stream, UINT16 parentIndex, UINT32 parentTokenEnd) {
+			/* Получив конец данных, функция знает, когда стоит остановиться */
+			while (stream.tellg() < parentTokenEnd) {
+				/* Создать новый токен */
+				BerTLVDecoderToken token(stream, parentIndex);
+
+				/* Добавить в массив токенов */
+				tokens[tokenSize++] = token;
+
+				/* Проверить, не закончилось ли место для токенов */
+				checkForExtend();
+
+				/* Если токен составной */
+				if (token.isConstructed()) {
+					/* Начать декодировать токены, определив */
+					/* Новый конец и индекс родителя равный индеску текущего токена */
+					decode(stream, tokenSize - 1, token.getDataLen() + stream.tellg());
+				}
+			}
+
+			/* Вернуть ноль в головную функцию - это указывает на начало массива токенов */
 			return 0;
 		}
 
-		/* Читаем первый байт длины и переходим к след. байту */
-		const unsigned char firstByte = tlvRaw[currentReadIndex];
-		currentReadIndex += 1;
-
-		/* Считаем длину */
-		size_t length = firstByte;
-		if (((firstByte >> 7) & 0x01) == 1) {
-			/* Определим кол-во байтов, кодировавших длину */
-			const unsigned char lenBytes = (firstByte & 0x7F);
-
-			/* Считываем все байты необходимые для длины байты */
-			length = 0;
-			for (int i = 0; i < lenBytes && currentReadIndex < tlvRaw.size(); i += 1, currentReadIndex += 1) {
-				length = (length << 8) | tlvRaw[currentReadIndex];
+		/* Функция проверки оставшегося места в массиве токенов */
+		void checkForExtend() {
+			/* Если размер токенов не превышает максимального размера */
+			if (tokenSize < tokenMaxSize) {
+				/* То делать ничего не надо */
+				return;
 			}
+			
+			/* Иначе вдвое расширим максимальную вместимость */
+			tokenMaxSize *= 2;
+
+			/* Выделим кусок памяти с новой вместимостью */
+			auto newPiece = make_unique<BerTLVDecoderToken[]>(tokenMaxSize);
+
+			/* Скопируем старый кусок памяти в новый */
+			memcpy(newPiece.get(), tokens.get(), tokenSize * sizeof(BerTLVDecoderToken));
+
+			/* Освободим старую память */
+			tokens.release();
+
+			/* Обменяем указатели - теперь newPiece = nullptr */
+			/* А tokens - хранит в себе новый массив токенов */
+			tokens.swap(newPiece);
+		}
+	public:
+		/* Максимальный размер массива токенов */
+		UINT16 tokenMaxSize = 8;
+
+		/* Текущий размер массива токенов */
+		UINT16 tokenSize = 0;
+
+		/* Сам массив токенов */
+		unique_ptr<BerTLVDecoderToken[]> tokens;
+
+		/* Конструктор декодера */
+		BerTLVDecoder() : tokens(new BerTLVDecoderToken[tokenMaxSize]) {}
+
+		/* Функция декодирования */
+		UINT16 decode(istream& stream) {
+			/* Получаем размер потока данных */
+			stream.seekg(0, ios::end);
+			UINT32 streamLen = stream.tellg();
+			stream.seekg(0);
+
+			/* Обнуляем текущий размер токенов */
+			tokenSize = 0;
+			return decode(stream, 0, streamLen);
 		}
 
-		/* Присваиваем возвращаем посчитанную длину */
-		return length;
-	}
+		/* Способ получить индекс токена по его тегу внутри составного тега */
+		UINT16 getChildByTag(UINT16 parent, UINT64 childTag) {
+			/* Начинаем с первого тега под родителем (так как в массиве они находятся подряд) */
+			for (UINT16 i = parent + 1; i < tokenSize; i += 1) {
+				/* Получаем токен по индексу */
+				BerTLVDecoderToken* token = &tokens[i];
 
-	std::vector<BerTLV> decodeChildrenTags(const std::vector<unsigned char>& tlvRaw, size_t& currentReadIndex) {
-		size_t currentReadIndexChildren = 0;
-		std::vector<BerTLV> children;
-		while (currentReadIndexChildren != berLen) {
-			/* Запоминаем, какой глобальный индекс перед декодированием тега */
-			size_t beforeDecode = currentReadIndex;
-
-			/* Декодируем тег и добавляем его в массив каскадирования */
-			BerTLV nextTag(tlvRaw, currentReadIndex);
-			children.push_back(nextTag);
-
-			/* Вычисляем количество прочитанных байтов */
-			currentReadIndexChildren += currentReadIndex - beforeDecode;
+				/* И проверяем его соответствие */
+				if (token->getTag() == childTag && token->getParent() == parent) {
+					/* Возвращаем индекс этого токена, если это тот, что нужен */
+					return i;
+				}
+			}
+			
+			/* Иначе, если не найден токен, вернуть ноль */
+			return 0;
 		}
 
-		return children;
-	}
-};
+		/* Получение самого токена (его указателя, если вернее) */
+		BerTLVDecoderToken* getTokenPtr(UINT16 tokenIndex) {
+			/* Если каким-то образом индекс больше текущего размера массива */
+			if (tokenIndex > tokenSize) {
+				/* То вернуть нулевой указатель */
+				return nullptr;
+			}
+
+			/* Во всех остальных случаях, вернуть адрес токена по индексу */
+			return &tokens[tokenIndex];
+		}
+	};
+
+	/* TODO: сделать BER-TLV кодировщик, как - пока не придумал */
+}
