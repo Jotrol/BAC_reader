@@ -95,13 +95,14 @@ public:
 	Responce SendCommand(vector<BYTE> commandAPDU) const {
 		/* Выделение буфера на 256 значений  */
 		DWORD bufferSize = 256;
+		DWORD apduSize = (DWORD)commandAPDU.size();
 		vector<BYTE> buffer(bufferSize);
 		LONG lReturn = SCARD_E_NOT_READY;
 
 		/* Совершаем попытки считать данные, пока не получится */
 		while (lReturn != SCARD_S_SUCCESS) {
 			/* Пытаемся считать данные */
-			lReturn = SCardTransmit(hCardHandle, SCARD_PCI_T1, commandAPDU.data(), commandAPDU.size(), nullptr, buffer.data(), &bufferSize);
+			lReturn = SCardTransmit(hCardHandle, SCARD_PCI_T1, commandAPDU.data(), apduSize, nullptr, buffer.data(), &bufferSize);
 
 			/* Если произошлша ошибка нехватки буфера */
 			if (lReturn == SCARD_E_INSUFFICIENT_BUFFER) {

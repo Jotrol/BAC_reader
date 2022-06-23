@@ -79,7 +79,7 @@ namespace BerTLV {
 			/* ≈сли в первом байте длины установлен старший бит */
 			/* “о длина продолжаетс€ в других байтах */
 			/*  ол - во равно первому байту(без старшего бита) */
-			UINT64 berLenRaw = firstByte;
+			UINT32 berLenRaw = firstByte;
 			if ((firstByte & 0x80) == 0x80) {
 				/* ѕолучаем кол-во байтов длины */
 				UINT8 lenBytes = (firstByte & 0x7F);
@@ -97,7 +97,7 @@ namespace BerTLV {
 			}
 
 			/* јгрегируем начало длину данных тега */
-			return make_tuple(stream.tellg(), berLenRaw);
+			return make_tuple((UINT32)stream.tellg(), berLenRaw);
 		}
 
 	public:
@@ -174,7 +174,7 @@ namespace BerTLV {
 				if (token.isConstructed()) {
 					/* Ќачать декодировать токены, определив */
 					/* Ќовый конец и индекс родител€ равный индеску текущего токена */
-					decode(stream, tokenSize - 1, token.getDataLen() + stream.tellg());
+					decode(stream, tokenSize - 1, token.getDataLen() + (UINT32)stream.tellg());
 				}
 			}
 
@@ -223,7 +223,7 @@ namespace BerTLV {
 		UINT16 decode(istream& stream) {
 			/* ѕолучаем размер потока данных */
 			stream.seekg(0, ios::end);
-			UINT32 streamLen = stream.tellg();
+			UINT32 streamLen = (UINT32)stream.tellg();
 			stream.seekg(0);
 
 			/* ќбнул€ем текущий размер токенов */
