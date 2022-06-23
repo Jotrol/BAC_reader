@@ -38,7 +38,7 @@ namespace BerTLV {
 		BerTagType berTagType;
 
 		/* Индекс родителя тега */
-		UINT16 berParentIndex;
+		INT16 berParentIndex;
 
 		/* Функция получения тега */
 		BerTagTuple decodeTag(istream& stream) {
@@ -103,7 +103,7 @@ namespace BerTLV {
 	public:
 		BerTLVDecoderToken() = default;
 
-		BerTLVDecoderToken(istream& stream, UINT16 parentIdx) {
+		BerTLVDecoderToken(istream& stream, INT16 parentIdx) {
 			/* Декодируем тег */
 			BerTagTuple tagTuple = decodeTag(stream);
 
@@ -142,11 +142,11 @@ namespace BerTLV {
 		UINT16 getParent() { return berParentIndex; }
 
 		/* Функция для получения данных тега */
-		unique_ptr<UINT8> getData(istream& stream) {
+		vector<UINT8> getData(istream& stream) {
 			stream.seekg(berDataStart);
 
-			unique_ptr<UINT8> data(new UINT8[berLen]);
-			stream.read((char*)data.get(), berLen);
+			vector<UINT8> data(berLen, 0);
+			stream.read((char*)data.data(), berLen);
 			return data;
 		}
 
@@ -158,7 +158,7 @@ namespace BerTLV {
 	class BerTLVDecoder {
 	private:
 		/* Функция декодирования, которая вызывается типа рекурсивно */
-		UINT16 decode(istream& stream, UINT16 parentIndex, UINT32 parentTokenEnd) {
+		UINT16 decode(istream& stream, INT16 parentIndex, UINT32 parentTokenEnd) {
 			/* Получив конец данных, функция знает, когда стоит остановиться */
 			while (stream.tellg() < parentTokenEnd) {
 				/* Создать новый токен */
@@ -232,7 +232,7 @@ namespace BerTLV {
 		}
 
 		/* Способ получить индекс токена по его тегу внутри составного тега */
-		UINT16 getChildByTag(UINT16 parent, UINT64 childTag) {
+		UINT16 getChildByTag(INT16 parent, UINT64 childTag) {
 			/* Начинаем с первого тега под родителем (так как в массиве они находятся подряд) */
 			for (UINT16 i = parent + 1; i < tokenSize; i += 1) {
 				/* Получаем токен по индексу */
@@ -259,6 +259,28 @@ namespace BerTLV {
 
 			/* Во всех остальных случаях, вернуть адрес токена по индексу */
 			return &tokens[tokenIndex];
+		}
+
+		vector<UINT8> getTokenRaw(istream& file, UINT16 tokenIndex) {
+			/* Если каким-то образом индекс больше текущего размера массива */
+			if (tokenIndex > tokenSize) {
+				/* То вернуть нулевой указатель */
+				return {};
+			}
+
+			UINT32 tokenRawStart = 0;
+			if (tokenIndex > 0) {
+				UINT16 prevIndex = tokenIndex - 1;
+				tokenRawStart = tokens[prevIndex].getDataStart() + tokens[prevIndex].getDataLen();
+			}
+
+			UINT32 tokenRawEnd = tokens[tokenIndex].getDataStart() + tokens[tokenIndex].getDataLen();
+			UINT32 tokenRawLen = tokenRawEnd - tokenRawStart;
+
+			vector<UINT8> rawToken(tokenRawLen, 0);
+			file.seekg(tokenRawStart);
+			file.read((char*)rawToken.data(), tokenRawLen);
+			return rawToken;
 		}
 	};
 

@@ -3,6 +3,9 @@
 #include "Crypto.hpp"
 #include "CardReader.hpp"
 #include "MRZDecoder.hpp"
+#include "BerTLV.hpp"
+
+#include <fstream>
 #include <sstream>
 using namespace std;
 
@@ -123,7 +126,7 @@ int main() {
 	mutualAuthCommand.push_back(0x28);
 
 	responce = reader.SendCommand(mutualAuthCommand);
-	cout << hex << (int)responce.SW1 << endl;
+	//cout << hex << (int)responce.SW1 << endl;
 
 	//responce = { {0x46, 0xB9, 0x34, 0x2A, 0x41, 0x39, 0x6C, 0xD7, 0x38, 0x6B, 0xF5, 0x80, 0x31, 0x04, 0xD7, 0xCE, 0xDC, 0x12, 0x2B, 0x91, 0x32, 0x13, 0x9B, 0xAF, 0x2E, 0xED, 0xC9, 0x4E, 0xE1, 0x78, 0x53, 0x4F, 0x2F, 0x2D, 0x23, 0x5D, 0x07, 0x4D, 0x74, 0x49}, 0x90, 0x00 };
 	vector<BYTE> resp_data(responce.responceData);
@@ -142,20 +145,20 @@ int main() {
 	}
 
 	vector<BYTE> kICC; kICC.insert(kICC.begin(), E_ICC.begin() + 16, E_ICC.end());
-	print_vector_hex(kICC, "kICC");
+	//print_vector_hex(kICC, "kICC");
 	for (int i = 0; i < kICC.size(); i += 1) {
 		kICC[i] = kICC[i] ^ kIFD[i];
 	}
-	print_vector_hex(kICC, "kICC xor kIFD");
+	//print_vector_hex(kICC, "kICC xor kIFD");
 
 	auto keys = generateKeyPair(kICC);
 	auto& ksEnc = keys.first;
 	auto& ksMac = keys.second;
 
-	print_vector_hex(ksMac, "ksMAC");
+	//print_vector_hex(ksMac, "ksMAC");
 
 	size_t SSC = ((size_t)rICC[4] << 56) | ((size_t)rICC[5] << 48) | ((size_t)rICC[6] << 40) | ((size_t)rICC[7] << 32) | ((size_t)rndIFD[4] << 24) | ((size_t)rndIFD[5] << 16) | ((size_t)rndIFD[6] << 8) | rndIFD[7];
-	cout << hex << SSC << dec << endl;
+	//cout << hex << SSC << dec << endl;
 
 	vector<BYTE> M = Crypto::fillISO9797({ 0x0C, 0xA4, 0x02, 0x0C }, 8);
 	vector<BYTE> data = Crypto::fillISO9797({ 0x01, 0x1E }, 8);
@@ -185,13 +188,37 @@ int main() {
 	APDU.insert(APDU.end(), DO8E.begin(), DO8E.end());
 	APDU.push_back(0x00);
 
-	print_vector_hex(APDU, "Completed APDU: ");
+	//print_vector_hex(APDU, "Completed APDU: ");
 	responce = reader.SendCommand(APDU);
+	//responce = { {0x99, 0x02, 0x90, 0x00, 0x8E, 0x08, 0xFA, 0x85, 0x5A, 0x5D, 0x4C, 0x50, 0xA8, 0xED, 0x90, 0x00 }, 0x90, 0x00 };
 	print_vector_hex(responce.responceData, "APDU responce");
 	cout << "APDU result: " << hex << (int)responce.SW1 << (int)responce.SW2 << dec << endl;
 	/* Удачно !! */
 
+	/* Декодируем RAPDU */
+	BerTLV::BerTLVDecoder decoder;
+	FILE* file = tmpfile();
+	fstream responceFile(file);
+	responceFile.write((char*)responce.responceData.data(), responce.responceData.size());
+	responceFile.seekg(0);
 
+	UINT16 rootIndex = decoder.decode(responceFile);
+	BerTLV::BerTLVDecoderToken* rootToken = decoder.getTokenPtr(rootIndex);
+	if (rootToken->getTag() != 0x99) { cerr << "Что-то не так в ответе" << endl; }
+
+	auto tag0x99Raw = decoder.getTokenRaw(responceFile, rootIndex);
+	auto CC_resp = decoder.getTokenPtr(decoder.getChildByTag(0, 0x8E))->getData(responceFile);
+	print_vector_hex(CC_resp, "CC_resp");
+
+	SSC += 1;
+	auto K = castToVector(SSC);
+	K.insert(K.end(), tag0x99Raw.begin(), tag0x99Raw.end());
+	print_vector_hex(K, "k_not_filled");
+
+	CC = mac.getMAC(K, ksMac);
+	print_vector_hex(CC, "CC");
+
+	cout << (CC_resp == CC) << endl;
 
 	return 0;
 }
