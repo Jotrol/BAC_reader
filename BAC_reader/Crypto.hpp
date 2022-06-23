@@ -44,6 +44,22 @@ namespace Crypto {
 		return dataCopy;
 	}
 
+	/* Функция заполнения по методу заполнения 2 стандарта ИСО/МЭК 9797-1 */
+	vector<BYTE> fillISO9797(const vector<BYTE>& data, int blockLen) {
+		/* Копируем исходные данные в изменяемый вектор */
+		vector<BYTE> dataCopy(data);
+
+		/* Заполняем по методу заполнения 2 стандарта ИСО/МЭК 9797-1 */
+		dataCopy.push_back(0x80); /* Добавляем единичный бит в конец данных, 128 = 0b10000000 */
+
+		/* Заполняем нулями пока не кратно размеру блоку */
+		while (dataCopy.size() % blockLen != 0) {
+			dataCopy.push_back(0);
+		}
+
+		return dataCopy;
+	}
+
 	const enum HashAlgName { SHA1 };
 	const map<HashAlgName, LPCWSTR> HashingAlgNameStr = {
 		{ HashAlgName::SHA1, BCRYPT_SHA1_ALGORITHM }
@@ -271,16 +287,8 @@ namespace Crypto {
 				return {};
 			}
 			
-			/* Копируем исходные данные в изменяемый вектор */
-			vector<BYTE> dataCopy(data);
-
-			/* Заполняем по методу заполнения 2 стандарта ИСО/МЭК 9797-1 */
-			dataCopy.push_back(128); /* Добавляем единичный бит в конец данных, 128 = 0b10000000 */
-
-			/* Заполняем нулями пока не кратно размеру блоку */
-			while (dataCopy.size() % cbBlockLen != 0) {
-				dataCopy.push_back(0);
-			}
+			/* Заполняем данные по стандарту */
+			vector<BYTE> paddedData = fillISO9797(data, cbBlockLen);
 
 			/* Выровняв данные, можно приступать к вычислению MAC */
 			/* Сначала выделим два подключа */
@@ -292,14 +300,10 @@ namespace Crypto {
 			vector<BYTE> output(cbBlockLen, 0);
 
 			/* В цикле обернёмся столько раз, сколько умещается размеров блока в размере выровненных данных */
-			for (size_t i = 0; i < dataCopy.size() / cbBlockLen; i += 1) {
-				/* Копируем часть данных в блок */
-				auto dataBlockBegin = dataCopy.data() + i * cbBlockLen;
-				memcpy(block.data(), dataBlockBegin, cbBlockLen);
-
+			for (size_t i = 0; i < paddedData.size() / cbBlockLen; i += 1) {
 				/* Выполняем XOR временного блока данных и выходного блока */
-				for (size_t j = 0; j < block.size(); j += 1) {
-					output[j] = output[j] ^ block[j];
+				for (size_t j = 0; j < cbBlockLen; j += 1) {
+					output[j] = output[j] ^ paddedData[i * cbBlockLen + j];
 				}
 
 				/* Проксорив блоки, можно выполнить этап шифрования */

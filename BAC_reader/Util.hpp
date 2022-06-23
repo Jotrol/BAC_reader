@@ -2,6 +2,7 @@
 
 #include <string>
 #include <random>
+#include <windef.h>
 
 namespace Util {
 #define IS_LITTLE_ENDIAN  ('ABCD'==0x41424344UL)
@@ -23,6 +24,11 @@ namespace Util {
 	template<typename T = UINT32>
 	UINT32 changeEndiannes(UINT32 val) {
 		return _byteswap_ulong(val);
+	}
+
+	template<typename T = UINT64>
+	UINT64 changeEndiannes(UINT64 val) {
+		return _byteswap_uint64(val);
 	}
 #endif
 
