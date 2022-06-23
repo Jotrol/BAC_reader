@@ -1,19 +1,23 @@
 #pragma once
 
+#include "Util.hpp"
+
 #include <windef.h>
 #include <iosfwd>
+#include <map>
+#include <vector>
 using namespace std;
 
 namespace BerTLV {
+	/* Классы тега */
+	enum class BerTagClass { UNIVERSAL, APPLICATION, CONTEXT_SPECIFIC, PRIVATE };
+
+	/* Тип тега */
+	enum class BerTagType { PRIMITIVE, CONSTRUCTED };
+
 	/* Класс токена одного BER-TLV тега */
 	class BerTLVDecoderToken {
 	private:
-		/* Классы тега */
-		enum class BerTagClass { UNIVERSAL, APPLICATION, CONTEXT_SPECIFIC, PRIVATE };
-
-		/* Тип тега */
-		enum class BerTagType { PRIMITIVE, CONSTRUCTED };
-
 		/* Пару typedef'ов, чтобы было удобней */
 		typedef tuple<BerTagClass, BerTagType, UINT64> BerTagTuple;
 		typedef tuple<UINT32, UINT32> BerLenTuple;
@@ -23,7 +27,7 @@ namespace BerTLV {
 
 		/* Длина тега */
 		UINT32 berLen;
-		
+
 		/* Смещение данных тега внутри потока */
 		UINT32 berDataStart;
 
@@ -185,7 +189,7 @@ namespace BerTLV {
 				/* То делать ничего не надо */
 				return;
 			}
-			
+
 			/* Иначе вдвое расширим максимальную вместимость */
 			tokenMaxSize *= 2;
 
@@ -240,7 +244,7 @@ namespace BerTLV {
 					return i;
 				}
 			}
-			
+
 			/* Иначе, если не найден токен, вернуть ноль */
 			return 0;
 		}
@@ -258,5 +262,91 @@ namespace BerTLV {
 		}
 	};
 
-	/* TODO: сделать BER-TLV кодировщик, как - пока не придумал */
+	class BerTLVCoderToken {
+	private:
+		BerTagType berTagType;
+
+		vector<BerTLVCoderToken> childTokens;
+		vector<UINT8> berData;
+		vector<UINT8> berTag;
+
+		UINT8 getFirstNonZeroByteIndex(UINT8* arr, UINT8 arrLen) {
+			UINT8 nonZeroIndex = 0;
+			for (; nonZeroIndex < arrLen && !arr[nonZeroIndex]; nonZeroIndex += 1);
+			return nonZeroIndex;
+		}
+
+		vector<UINT8> encodeLen(UINT64 berLen) {
+			if (berLen < 0x80ULL) {
+				return { (UINT8)(berLen & 0xFF) };
+			}
+			
+			UINT8 lenRaw[sizeof(UINT64)] = { 0 };
+			UINT64 temp = Util::changeEndiannes(berLen);
+			memcpy(lenRaw, &temp, sizeof(UINT64));
+			
+			UINT8 nonZero = getFirstNonZeroByteIndex(lenRaw, sizeof(UINT64));
+			UINT8 lenSize = sizeof(UINT64) - nonZero;
+			vector<UINT8> lenEnc = { lenSize };
+			for (UINT i = 0; i < sizeof(UINT64); i += 1) {
+				lenEnc.push_back(lenRaw[i]);
+			}
+			return lenEnc;
+		}
+		vector<UINT8> encodeValue() {
+			if (berTagType == BerTagType::PRIMITIVE) {
+				return berData;
+			}
+
+			vector<UINT8> value;
+			for (auto& child : childTokens) {
+				vector<UINT8> childEnc = child.encode();
+				value.insert(value.end(), childEnc.begin(), childEnc.end());
+			}
+
+			return value;
+		}
+	public:
+		BerTLVCoderToken(UINT64 newBerTag) : childTokens(), berData() {
+			/* Определяем старший байт, который не равен нулю */
+			/* Так как поменяли расположение байтов на bigendian */
+			/* Значит, самый младший - последний, а старший - первый */
+			/* Однако есть нулевые байты. Среди них и надо отыскать первый ненулевой */
+			UINT8 berTagRaw[sizeof(UINT64)] = { 0 };
+			newBerTag = Util::changeEndiannes(newBerTag);
+			memcpy(berTagRaw, &newBerTag, sizeof(UINT64));
+
+			UINT8 nonZero = getFirstNonZeroByteIndex(berTagRaw, sizeof(UINT64));
+
+			/* Найдя такой байт, берём его и получаем класс тега */
+			UINT8 firstByte = berTagRaw[nonZero];
+			berTagType = (BerTagType)((firstByte >> 5) & 0x01);
+
+			/* Копируем байты тега в массив в bigendian */
+			for (INT i = nonZero; i < sizeof(UINT64); i += 1) {
+				berTag.push_back(berTagRaw[i]);
+			}
+		}
+		
+		void addData(const char* data, UINT16 dataLen) {
+			for (int i = 0; i < dataLen; i += 1) {
+				berData.push_back(data[i]);
+			}
+		}
+		void addChild(BerTLVCoderToken& child) {
+			childTokens.push_back(child);
+		}
+
+		vector<UINT8> encode() {
+			vector<UINT8> valEnc = encodeValue();
+			vector<UINT8> lenEnc = encodeLen(valEnc.size());
+
+			vector<UINT8> result;
+			result.insert(result.end(), berTag.begin(), berTag.end());
+			result.insert(result.end(), lenEnc.begin(), lenEnc.end());
+			result.insert(result.end(), valEnc.begin(), valEnc.end());
+
+			return result;
+		}
+	};
 }
