@@ -41,6 +41,18 @@ tuple<vector<BYTE>, vector<BYTE>, vector<BYTE>> getKeysToEncAndMac(string mrzLin
 	return make_tuple(kEnc, kMac, kSeed);
 }
 
+template<typename T>
+vector<BYTE> castToVector(T val) {
+	BYTE valRaw[sizeof(T)] = { 0 };
+	memcpy(valRaw, &val, sizeof(T));
+
+	vector<BYTE> out;
+	for (int i = sizeof(T) - 1; i > -1; i -= 1) {
+		out.push_back(valRaw[i]);
+	}
+	return out;
+}
+
 vector<BYTE> SelectApp = { 0x00, 0xA4, 0x04, 0x0C, 0x07, 0xA0, 0x00, 0x00, 0x02, 0x47, 0x10, 0x01 };
 vector<BYTE> GetICC = { 0x00, 0x84, 0x00, 0x00, 0x08 };
 vector<BYTE> MUTUAL_AUTH = { 0x00, 0x82, 0x00, 0x00, 0x28 };
@@ -50,11 +62,15 @@ vector<BYTE> SelectCOM = { 0x00, 0xA4, 0x02, 0x0C, 0x02, 0x01, 0x0E };
 #include <ctime>
 
 void print_vector_hex(const vector<BYTE>& data, string msg) {
+	const char hexVals[17] = "0123456789ABCDEF";
+
 	cout << msg << ": ";
 	for (int i = 0; i < data.size(); i += 1) {
-		cout << hex << (int)data[i];
+		cout << hexVals[(data[i] >> 4) & 0x0F];
+		cout << hexVals[data[i] & 0x0F];
+		cout << " ";
 	}
-	cout << dec << endl;
+	cout << endl;
 }
 
 //INT WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrevInst, LPSTR lpCmdLine, INT nCmdShow) {
@@ -62,8 +78,8 @@ int main() {
 	srand(time(NULL));
 	setlocale(LC_ALL, "rus");
 
-	//"5200000001RUS8008046F0902274<<<<<<<<<<<<<<<06"
-	auto tuple = getKeysToEncAndMac("L898902C<3UTO6908061F9406236ZE184226B<<<<<14");
+	//"L898902C<3UTO6908061F9406236ZE184226B<<<<<14"
+	auto tuple = getKeysToEncAndMac("5200000001RUS8008046F0902274<<<<<<<<<<<<<<<06");
 	auto& kEnc = std::get<0>(tuple);
 	auto& kMac = std::get<1>(tuple);
 	auto& kSeed = std::get<2>(tuple);
@@ -76,14 +92,14 @@ int main() {
 	vector<BYTE> rndIFD = { 0x78, 0x17, 0x23, 0x86, 0x0C, 0x06, 0xC2, 0x26 };
 	vector<BYTE> kIFD = { 0x0B, 0x79, 0x52, 0x40, 0xCB, 0x70, 0x49, 0xB0, 0x1C, 0x19, 0xB3, 0x3E, 0x32, 0x80, 0x4F, 0x0B };
 
-	//CardReader reader;
-	//auto readersList = reader.GetReadersList();
-	//reader.CardConnect(readersList[0]);
+	CardReader reader;
+	auto readersList = reader.GetReadersList();
+	reader.CardConnect(readersList[0]);
 
 	/* Отправим команду выбора приложения */
-	//Responce responce = reader.SendCommand(SelectApp);
-	//responce = reader.SendCommand(GetICC);
-	Responce responce = { {0x46, 0x08, 0xF9, 0x19, 0x88, 0x70, 0x22, 0x12}, 0x90, 0x00 };
+	Responce responce = reader.SendCommand(SelectApp);
+	responce = reader.SendCommand(GetICC);
+	//Responce responce = { {0x46, 0x08, 0xF9, 0x19, 0x88, 0x70, 0x22, 0x12}, 0x90, 0x00 };
 
 	vector<BYTE> S(rndIFD);
 	vector<BYTE> rICC = responce.responceData;
@@ -100,16 +116,16 @@ int main() {
 	vector<BYTE> cmdData;
 	cmdData.insert(cmdData.end(), E_IFD.begin(), E_IFD.end());
 	cmdData.insert(cmdData.end(), M_IFD.begin(), M_IFD.end());
-	print_vector_hex(cmdData, "cmd_data");
+	//print_vector_hex(cmdData, "cmd_data");
 
-	//vector<BYTE> mutualAuthCommand(MUTUAL_AUTH);
-	//mutualAuthCommand.insert(mutualAuthCommand.end(), cmdData.begin(), cmdData.end());
-	//mutualAuthCommand.push_back(0x28);
+	vector<BYTE> mutualAuthCommand(MUTUAL_AUTH);
+	mutualAuthCommand.insert(mutualAuthCommand.end(), cmdData.begin(), cmdData.end());
+	mutualAuthCommand.push_back(0x28);
 
-	//responce = reader.SendCommand(mutualAuthCommand);
-	//cout << hex << (int)responce.SW1 << endl;
+	responce = reader.SendCommand(mutualAuthCommand);
+	cout << hex << (int)responce.SW1 << endl;
 
-	responce = { {0x46, 0xB9, 0x34, 0x2A, 0x41, 0x39, 0x6C, 0xD7, 0x38, 0x6B, 0xF5, 0x80, 0x31, 0x04, 0xD7, 0xCE, 0xDC, 0x12, 0x2B, 0x91, 0x32, 0x13, 0x9B, 0xAF, 0x2E, 0xED, 0xC9, 0x4E, 0xE1, 0x78, 0x53, 0x4F, 0x2F, 0x2D, 0x23, 0x5D, 0x07, 0x4D, 0x74, 0x49}, 0x90, 0x00 };
+	//responce = { {0x46, 0xB9, 0x34, 0x2A, 0x41, 0x39, 0x6C, 0xD7, 0x38, 0x6B, 0xF5, 0x80, 0x31, 0x04, 0xD7, 0xCE, 0xDC, 0x12, 0x2B, 0x91, 0x32, 0x13, 0x9B, 0xAF, 0x2E, 0xED, 0xC9, 0x4E, 0xE1, 0x78, 0x53, 0x4F, 0x2F, 0x2D, 0x23, 0x5D, 0x07, 0x4D, 0x74, 0x49}, 0x90, 0x00 };
 	vector<BYTE> resp_data(responce.responceData);
 	vector<BYTE> E_ICC_RAW; E_ICC_RAW.insert(E_ICC_RAW.begin(), resp_data.begin(), resp_data.begin() + 32);
 	vector<BYTE> M_ICC_RAW; M_ICC_RAW.insert(M_ICC_RAW.begin(), resp_data.begin() + 32, resp_data.end());
@@ -136,11 +152,46 @@ int main() {
 	auto& ksEnc = keys.first;
 	auto& ksMac = keys.second;
 
-	size_t SCC = ((size_t)rICC[4] << 56) | ((size_t)rICC[5] << 48) | ((size_t)rICC[6] << 40) | ((size_t)rICC[7] << 32) | ((size_t)rndIFD[4] << 24) | ((size_t)rndIFD[5] << 16) | ((size_t)rndIFD[6] << 8) | rndIFD[7];
-	cout << hex << SCC << dec << endl;
+	print_vector_hex(ksMac, "ksMAC");
 
-	vector<BYTE> commandHeader = { 0x0C, 0xA4, 0x02, 0x0C, 0x80, 0x00, 0x00, 0x00 };
-	vector<BYTE> data = { 0x01, 0x1E, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00 };
+	size_t SSC = ((size_t)rICC[4] << 56) | ((size_t)rICC[5] << 48) | ((size_t)rICC[6] << 40) | ((size_t)rICC[7] << 32) | ((size_t)rndIFD[4] << 24) | ((size_t)rndIFD[5] << 16) | ((size_t)rndIFD[6] << 8) | rndIFD[7];
+	cout << hex << SSC << dec << endl;
+
+	vector<BYTE> M = Crypto::fillISO9797({ 0x0C, 0xA4, 0x02, 0x0C }, 8);
+	vector<BYTE> data = Crypto::fillISO9797({ 0x01, 0x1E }, 8);
+	vector<BYTE> encData = des3.encrypt(data, ksEnc);
+
+	vector<BYTE> DO87 = { 0x87, 0x09, 0x01 };
+	DO87.insert(DO87.end(), encData.begin(), encData.end());
+	M.insert(M.end(), DO87.begin(), DO87.end());
+	print_vector_hex(M, "M");
+
+	//size_t SSC = 0x887022120C06C227ULL;
+
+	/* Удачно!! */
+	SSC += 1;
+	vector<BYTE> N = castToVector(SSC);
+	N.insert(N.end(), M.begin(), M.end());
+	print_vector_hex(N, "N");
+
+	vector<BYTE> CC = mac.getMAC(N, ksMac);
+	print_vector_hex(CC, "CC");
+
+	vector<BYTE> DO8E = { 0x8E, 0x08 };
+	DO8E.insert(DO8E.end(), CC.begin(), CC.end());
+
+	vector<BYTE> APDU = { 0x0C, 0xA4, 0x02, 0x0C, 0x15 };
+	APDU.insert(APDU.end(), DO87.begin(), DO87.end());
+	APDU.insert(APDU.end(), DO8E.begin(), DO8E.end());
+	APDU.push_back(0x00);
+
+	print_vector_hex(APDU, "Completed APDU: ");
+	responce = reader.SendCommand(APDU);
+	print_vector_hex(responce.responceData, "APDU responce");
+	cout << "APDU result: " << hex << (int)responce.SW1 << (int)responce.SW2 << dec << endl;
+	/* Удачно !! */
+
+
 
 	return 0;
 }
