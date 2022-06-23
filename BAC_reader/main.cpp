@@ -76,7 +76,7 @@ void print_vector_hex(const vector<BYTE>& data, string msg) {
 	cout << endl;
 }
 inline void ERROR_LOG(string msg, const Responce& responce) {
-	cerr << msg << hex << responce.SW1 << responce.SW2 << dec << endl;
+	cerr << msg << hex << (int)responce.SW1 << (int)responce.SW2 << dec << endl;
 }
 inline bool RESPONCE_OK(const Responce& responce) {
 	return (responce.SW1 == 0x90 && responce.SW2 == 0x00);
@@ -167,6 +167,55 @@ inline bool RESPONCE_OK(const Responce& responce) {
 	}
 #endif
 
+vector<BYTE> generateCommand(BYTE INS, BYTE P1, BYTE P2) {
+	return { 0x0C, INS, P1, P2 };
+}
+vector<BYTE> generateDO87(Crypto::Des3& des3, const vector<BYTE>& kEnc, const vector<BYTE>& commandData) {
+	/* Здесь данные копируются, а затем дополняются до размера блока пл стандарту ISO 9797-1 */
+	vector<BYTE> encCommandData = Crypto::fillISO9797(commandData, des3.getBlockLen());
+	encCommandData = des3.encrypt(encCommandData, kEnc);
+
+	/* Добавление '1' в начале зашифрованных данных; так в стандарте сказано */
+	encCommandData.insert(encCommandData.begin(), '1');
+
+	BerTLV::BerTLVCoderToken encDataToken(0x87);
+	encDataToken.addData(encCommandData);
+
+	return encDataToken.encode();
+}
+vector<BYTE> generateDO87MAC(Crypto::RetailMAC& mac, const vector<BYTE>& ksMAC, const vector<BYTE>& commandHeader, const vector<BYTE>& DO87, UINT64& SSC) {
+	/* Увеличиваем SSC и получаем его байты */
+	SSC += 1;
+	vector<BYTE> N = castToVector(SSC);
+
+	/* Заполняем заголовок */
+	vector<BYTE> filledCommandHeader = Crypto::fillISO9797(commandHeader, mac.getBlockLen());
+	
+	/* Конкатенация SSC, заголовка сообщения и DO87 */
+	N.insert(N.end(), filledCommandHeader.begin(), filledCommandHeader.end());
+	N.insert(N.end(), DO87.begin(), DO87.end());
+
+	/* Вычисление MAC */
+	return mac.getMAC(N, ksMAC);
+}
+vector<BYTE> createDO8E(const vector<BYTE>& do87Mac) {
+	BerTLV::BerTLVCoderToken do8E(0x8E);
+	do8E.addData(do87Mac);
+	return do8E.encode();
+}
+vector<BYTE> createAPDU(const vector<BYTE>& commandHeader, const vector<BYTE>& DO87, const vector<BYTE>& DO8E) {
+	UINT64 apduTag = 0;
+	for (UINT i = 0; i < commandHeader.size(); i += 1) {
+		apduTag = (apduTag << 8) | (commandHeader[i] & 0xFF);
+	}
+
+	BerTLV::BerTLVCoderToken apduToken(apduTag);
+	apduToken.addData(DO87);
+	apduToken.addData(DO8E);
+	apduToken.addData("\x00", 1);
+	return apduToken.encode();
+}
+
 int main() {
 	srand((UINT)time(NULL));
 	setlocale(LC_ALL, "rus");
@@ -247,41 +296,22 @@ int main() {
 
 	/* D4. Безопасный обмен сообщениями */
 	/* D4.1.a. Маскирование и заполнение байта класса */
-	vector<BYTE> M = Crypto::fillISO9797({ 0x0C, 0xA4, 0x02, 0x0C }, 8);
+	vector<BYTE> commandHeader = generateCommand(0xA4, 0x02, 0x0C);
 
 	/* D4.1.b. Заполнение данных */
-	vector<BYTE> data = Crypto::fillISO9797({ 0x01, 0x1E }, 8);
-
-	/* D4.1.c. Шифрование данных с ksEnc */
-	vector<BYTE> encData = des3.encrypt(data, ksEnc);
+	vector<BYTE> data = { 0x01, 0x1E };
 
 	/* D4.1.d. Построение DO'87 */
-	vector<BYTE> DO87 = { 0x87, 0x09, 0x01 };
-	DO87.insert(DO87.end(), encData.begin(), encData.end());
-
-	/* D4.1.e. Конкатенация заголвока команды и DO'87 */
-	M.insert(M.end(), DO87.begin(), DO87.end());
-
-	/* D4.1.f. Вычисление MAC от M */
-	/* D4.1.f.i. Приращение SSC на 1 и перевод его в байты в BigEndian */
-	SSC += 1;
-	vector<BYTE> N = castToVector(SSC);
-	
-	/* D4.1.f.ii. Конкатенация SSC и M */
-	N.insert(N.end(), M.begin(), M.end());
+	vector<BYTE> DO87 = generateDO87(des3, ksEnc, data);
 
 	/* D4.1.f.iii. Добавление заполнения (getMAC это делает сам) и вычисление MAC по N с ksMac */
-	vector<BYTE> CC = mac.getMAC(N, ksMac);
+	vector<BYTE> CC = generateDO87MAC(mac, ksMac, commandHeader, DO87, SSC);
 
 	/* D4.1.g. Построение DO'8E */
-	vector<BYTE> DO8E = { 0x8E, 0x08 };
-	DO8E.insert(DO8E.end(), CC.begin(), CC.end());
+	vector<BYTE> DO8E = createDO8E(CC);
 
 	/* D4.1.h. Построение защищённой команды APDU */
-	vector<BYTE> APDU = { 0x0C, 0xA4, 0x02, 0x0C, 0x15 };
-	APDU.insert(APDU.end(), DO87.begin(), DO87.end());
-	APDU.insert(APDU.end(), DO8E.begin(), DO8E.end());
-	APDU.push_back(0x00);
+	vector<BYTE> APDU = createAPDU(commandHeader, DO87, DO8E);
 
 	/* D4.1.i. Отправка команды и получение ответа - RAPDU */
 	vector<BYTE> apduSendResponce = sendAPDUEFCOM(reader, APDU);

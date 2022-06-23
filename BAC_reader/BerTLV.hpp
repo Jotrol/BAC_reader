@@ -355,6 +355,9 @@ namespace BerTLV {
 				berData.push_back(data[i]);
 			}
 		}
+		void addData(const vector<UINT8>& data) {
+			berData.insert(berData.end(), data.begin(), data.end());
+		}
 		void addChild(BerTLVCoderToken& child) {
 			childTokens.push_back(child);
 		}

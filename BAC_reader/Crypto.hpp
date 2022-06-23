@@ -269,6 +269,8 @@ namespace Crypto {
 		std::vector<BYTE> encrypt(const vector<BYTE>& data, const vector<BYTE>& key) { return perfomAction(data, key, SymmetricAlgAction::ENCRYPT); }
 		std::vector<BYTE> decrypt(const vector<BYTE>& data, const vector<BYTE>& key) { return perfomAction(data, key, SymmetricAlgAction::DECRYPT); }
 
+		DWORD getBlockLen() const { return cbBlockLen; }
+
 		~SymmetricEncryptionAlgorithm() {
 			BCryptCloseAlgorithmProvider(hSymmetricAlg, 0);
 		}
@@ -317,6 +319,8 @@ namespace Crypto {
 			/* И возврат исходных данных */
 			return output;
 		}
+
+		DWORD getBlockLen() const { return cbBlockLen; }
 	};
 
 	typedef SymmetricEncryptionAlgorithm<SymmetricAlgName::TripleDES, SymmetricAlgMode::CBC> Des3;
