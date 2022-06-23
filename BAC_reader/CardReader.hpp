@@ -92,7 +92,7 @@ public:
 	}
 
 	/* Функция отправки команды */
-	Responce SendCommand(vector<BYTE> commandAPDU) {
+	Responce SendCommand(vector<BYTE> commandAPDU) const {
 		/* Выделение буфера на 256 значений  */
 		DWORD bufferSize = 256;
 		vector<BYTE> buffer(bufferSize);
