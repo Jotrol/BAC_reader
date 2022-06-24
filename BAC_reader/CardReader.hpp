@@ -104,20 +104,19 @@ public:
 
 				/* Убеждаемся, что размер буфера не будет больше 10 КБайт */
 				if (bufferSize >= (2 << 12)) {
-					cerr << "Файл слишком большой" << endl;
-					return {};
+					throw std::exception("Ошибка: Файл слишком большой");
 				}
 
 				/* Увеличиваем размер буфера */
 				buffer.reserve(bufferSize);
 			}
 			else if (lReturn != SCARD_S_SUCCESS) {
-				cerr << "Произошла ошибка считывания, код ошибки: " << hex << lReturn << dec << endl;
-				return {};
+				cerr << hex << lReturn << dec << endl;
+				throw std::exception("Ошибка: ошибка считывания");
 			}
 		}
-
-		/* Производим перемещение буфера в структуру ответа, а также записываем коды ответа */
+		
+		buffer.resize(bufferSize);
 		return buffer;
 	}
 

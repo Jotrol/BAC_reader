@@ -224,7 +224,7 @@ namespace BerTLV {
 		}
 
 		/* —пособ получить индекс токена по его тегу внутри составного тега */
-		UINT16 getChildByTag(INT16 parent, UINT64 childTag) {
+		INT16 getChildByTag(INT16 parent, UINT64 childTag) {
 			/* Ќачинаем с первого тега под родителем (так как в массиве они наход€тс€ подр€д) */
 			for (UINT16 i = parent; i < tokenSize; i += 1) {
 				/* ѕолучаем токен по индексу */
@@ -238,7 +238,7 @@ namespace BerTLV {
 			}
 
 			/* »наче, если не найден токен, вернуть ноль */
-			return 0;
+			return -1;
 		}
 
 		/* ѕолучение самого токена (его указател€, если вернее) */

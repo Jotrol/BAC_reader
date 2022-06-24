@@ -4,11 +4,14 @@
 #include "CardReader.hpp"
 #include "MRZDecoder.hpp"
 #include "BerTLV.hpp"
+#include "APDU.hpp"
 
 #include <fstream>
 #include <sstream>
 #include <cassert>
 using namespace std;
+
+#define REAL_TEST
 
 pair< vector<UINT8>, vector<UINT8>> generateKeyPair(const vector<UINT8>& kSeed) {
 	Crypto::Sha1& sha1 = Crypto::getSha1Alg();
@@ -58,18 +61,10 @@ void print_vector_hex(const vector<UINT8>& data, string msg) {
 	for (int i = 0; i < data.size(); i += 1) {
 		cout << hexVals[(data[i] >> 4) & 0x0F];
 		cout << hexVals[data[i] & 0x0F];
-		cout << " ";
+		//cout << " ";
 	}
 	cout << endl;
 }
-inline void ERROR_LOG(string msg, const Responce& responce) {
-	cerr << msg << hex << (int)responce.SW1 << (int)responce.SW2 << dec << endl;
-}
-inline bool RESPONCE_OK(const Responce& responce) {
-	return (responce.SW1 == 0x90 && responce.SW2 == 0x00);
-}
-
-#define REAL_TEST
 
 #ifdef REAL_TEST
 	string getMRZCode() {
@@ -91,51 +86,46 @@ inline bool RESPONCE_OK(const Responce& responce) {
 	}
 	vector<UINT8> getICC(const CardReader& reader) {
 		/* Выбираем приложение карты */
-		Responce responce = reader.SendCommand(SelectApp);
-		if (!RESPONCE_OK(responce)) {
-			ERROR_LOG("Ошибка: не удалось отправить команду SelectApp: ", responce);
-			return {};
+		APDU::RAPDU responce(reader.SendCommand(SelectApp));
+		if (!responce.isResponceOK()) {
+			throw std::exception("Ошибка: не удалось отправить SelectApp");
 		}
 
 		/* Отправляем команду для начала обмена ключами */
-		responce = reader.SendCommand(GetICC);
-		if (!RESPONCE_OK(responce)) {
-			ERROR_LOG("Ошибка: не удалось отправить команду GetICC: ", responce);
-			return {};
+		responce = APDU::RAPDU(reader.SendCommand(GetICC));
+		if (!responce.isResponceOK()) {
+			throw std::exception("Ошибка: не удалось отправить GetICC");
 		}
-
-		return responce.responceData;
+		return responce.getResponceData();
 	}
 	vector<UINT8> getMutualAuth(const CardReader& reader, const vector<UINT8>& cmdData) {
 		vector<UINT8> mutualAuthCommand(MUTUAL_AUTH);
 		mutualAuthCommand.insert(mutualAuthCommand.end(), cmdData.begin(), cmdData.end());
 		mutualAuthCommand.push_back(0x28);
 
-		Responce responce = reader.SendCommand(mutualAuthCommand);
-		if (!RESPONCE_OK(responce)) {
-			ERROR_LOG("Ошибка: не удалось отправить команду MutualAuth: ", responce);
-			return {};
+		APDU::RAPDU responce = reader.SendCommand(mutualAuthCommand);
+		if (!responce.isResponceOK()) {
+			throw std::exception("Ошибка: не удалось отправить MutualAuth");
 		}
 
-		return responce.responceData;
+		return responce.getResponceData();
 	}
 	UINT64 getSSC(const vector<UINT8>& rICC, const vector<UINT8>& rndIFD) {
 		return ((UINT64)rICC[4] << 56) | ((UINT64)rICC[5] << 48) | ((UINT64)rICC[6] << 40) | ((UINT64)rICC[7] << 32) | ((UINT64)rndIFD[4] << 24) | ((UINT64)rndIFD[5] << 16) | ((UINT64)rndIFD[6] << 8) | rndIFD[7];
 	}
 	vector<UINT8> sendAPDUEFCOM(const CardReader& reader, const vector<UINT8>& apdu) {
-		Responce responce = reader.SendCommand(apdu);
-		if (!RESPONCE_OK(responce)) {
-			ERROR_LOG("Ошибка: не удалось отправить команду APDU: ", responce);
-			return {};
-		}
-
-		return responce.responceData;
+		return reader.SendCommand(apdu);
+	}
+	vector<UINT8> sendReadEFCOM(const CardReader& reader, const vector<UINT8>& apdu) {
+		return reader.SendCommand(apdu);
 	}
 #else
 	vector<UINT8> expectedCmdData = { 0x72, 0xC2, 0x9C, 0x23, 0x71, 0xCC, 0x9B, 0xDB, 0x65, 0xB7, 0x79, 0xB8, 0xE8, 0xD3, 0x7B, 0x29, 0xEC, 0xC1, 0x54, 0xAA, 0x56, 0xA8, 0x79, 0x9F, 0xAE, 0x2F, 0x49, 0x8F, 0x76, 0xED, 0x92, 0xF2, 0x5F, 0x14, 0x48, 0xEE, 0xA8, 0xAD, 0x90, 0xA7 };
 
 	/* Если верить стандарту (а надо), то в конце может быть записано двухбайтное Le, либо 0x00 (если Le = 0) или 0x00 0x00 (потому что два байта). Два нулевых байта можно */
-	vector<UINT8> expectedAPDUEFCOM = { 0x0C, 0xA4, 0x02, 0x0C, 0x15, 0x87, 0x09, 0x01, 0x63, 0x75, 0x43, 0x29, 0x08, 0xC0, 0x44, 0xF6, 0x8E, 0x08, 0xBF, 0x8B, 0x92, 0xD6, 0x35, 0xFF, 0x24, 0xF8, 0x00, 0x00 };
+	vector<UINT8> expectedAPDUEFCOM = { 0x0C, 0xA4, 0x02, 0x0C, 0x15, 0x87, 0x09, 0x01, 0x63, 0x75, 0x43, 0x29, 0x08, 0xC0, 0x44, 0xF6, 0x8E, 0x08, 0xBF, 0x8B, 0x92, 0xD6, 0x35, 0xFF, 0x24, 0xF8, 0x00 };
+
+	vector<UINT8> expectedReadEFCOM = { 0x0C, 0xB0, 0x00, 0x00, 0x0D, 0x97, 0x01, 0x04, 0x8E, 0x08, 0xED, 0x67, 0x05, 0x41, 0x7E, 0x96, 0xBA, 0x55, 0x00 };
 
 	string getMRZCode() { return "L898902C<3UTO6908061F9406236ZE184226B<<<<<14"; }
 	vector<UINT8> generateRndIFD() { return { 0x78, 0x17, 0x23, 0x86, 0x0C, 0x06, 0xC2, 0x26 }; }
@@ -151,10 +141,14 @@ inline bool RESPONCE_OK(const Responce& responce) {
 		return SSC;
 	}
 	vector<UINT8> sendAPDUEFCOM(const CardReader& reader, const vector<UINT8>& apdu) {
-		print_vector_hex(apdu, "APDU        ");
-		print_vector_hex(expectedAPDUEFCOM, "expectedAPDU");
 		assert(apdu == expectedAPDUEFCOM);
 		return { 0x99, 0x02, 0x90, 0x00, 0x8E, 0x08, 0xFA, 0x85, 0x5A, 0x5D, 0x4C, 0x50, 0xA8, 0xED, 0x90, 0x00 };
+	}
+	vector<UINT8> sendReadEFCOM(const CardReader& reader, const vector<UINT8>& apdu) {
+		print_vector_hex(apdu, "APDU        ");
+		print_vector_hex(expectedReadEFCOM, "expectedAPDU");
+		assert(apdu == expectedReadEFCOM);
+		return { 0x87, 0x09, 0x01, 0x9F, 0xF0, 0xEC, 0x34, 0xF9, 0x92, 0x26, 0x51, 0x99, 0x02, 0x90, 0x00, 0x8E, 0x08, 0xAD, 0x55, 0xCC, 0x17, 0x14, 0x0B, 0x2D, 0xED, 0x90, 0x00 };
 	}
 #endif
 
@@ -170,6 +164,8 @@ int main() {
 
 	CardReader reader;
 	auto readersList = reader.GetReadersList();
+
+	cin.get();
 	reader.CardConnect(readersList[0]);
 
 	/* D1, D2. Получение ключей для шифрования, MAC и генерации ключевых пар */
@@ -215,14 +211,14 @@ int main() {
 
 	auto M_ICC_CALC = mac.getMAC(E_ICC_RAW, kMac);
 	if (M_ICC_CALC != M_ICC_RAW) {
-		throw exception("Ошибка: MAC не совпал с ответом");
+		throw std::exception("Ошибка: MAC не совпал с ответом");
 	}
 
 	auto E_ICC = des3.decrypt(E_ICC_RAW, kEnc);
 	vector<UINT8> RND_IFD;
 	RND_IFD.insert(RND_IFD.begin(), E_ICC.begin() + 8, E_ICC.begin() + 16);
 	if (RND_IFD != rndIFD) {
-		throw exception("Ошибка: RND.IFD не совпал");
+		throw std::exception("Ошибка: RND.IFD не совпал");
 	}
 
 	vector<UINT8> kICC;
@@ -238,52 +234,22 @@ int main() {
 	/* Получение счётчика посылаемых блоков */
 	size_t SSC = getSSC(rICC, rndIFD);
 
-	APDU selectEFCOM(0x00, 0xA4, 0x02, 0xC, { 0x01, 0x1E });
-	SecureAPDU secureApdu(selectEFCOM);
+	APDU::APDU selectEFCOM(0x00, 0xA4, 0x02, 0xC, { 0x01, 0x1E });
+	APDU::SecureAPDU secureApdu(selectEFCOM);
 
-	/* D4.1.i. Отправка команды и получение ответа - RAPDU */
-	vector<UINT8> apduSendResponce = sendAPDUEFCOM(reader, secureApdu.generateRawSecureAPDU(ksEnc, ksMac, SSC));
-	if (apduSendResponce.size() == 0) { return 1; }
+	vector<UINT8> responceRaw = sendAPDUEFCOM(reader, secureApdu.generateRawSecureAPDU(ksEnc, ksMac, SSC));
+	APDU::SecureRAPDU secureResponce(responceRaw, SSC, ksMac, ksEnc);
+	if (secureResponce.isResponceOK()) {
+		cout << "Ура, всё ОК!" << endl;
+	}
 
-	/* D4.1.j. Верификация RAPDU CC путем вычисления MAC DO'99 */
-	/* Инициализируем декодер для BER-TLV данных */
-	BerTLV::BerTLVDecoder decoder;
-
-	/* Создаём временный файл, куда запишем полученные данные */
-	ResponceTempFile responceFile;
-	responceFile.write(apduSendResponce);
-	responceFile.seek(0);
-
-	/* Декодируем данные */
-	UINT16 rootIndex = decoder.decode(responceFile);
-	BerTLV::BerTLVDecoderToken* rootToken = decoder.getTokenPtr(rootIndex);
-	if (rootToken->getTag() != 0x99) { cerr << "Что-то не так в ответе" << endl; return 1; }
-
-	/* Получаем токен с тегом 0x99 как он выглядит без декодирования */
-	vector<UINT8> tag0x99Raw = decoder.getTokenRaw(responceFile, rootIndex);
-
-	/* Ищем тег с CC сообщения */
-	UINT16 tag0x8E = decoder.getChildByTag(0, 0x8E);
-	if (tag0x8E == 0) { cerr << "Нет такого тега!" << endl; return 1; }
-
-	/* Получаем MAC сообщения из токена */
-	vector<UINT8> CC_resp = decoder.getTokenData(responceFile, tag0x8E);
-	print_vector_hex(CC_resp, "CC_resp");
-
-	/* D4.1.j.i. Приращение SSC на 1 */
-	SSC += 1;
-
-	/* D4.1.j.ii. Конкатенация SSC и DO'99 */
-	auto K = castToVector(SSC);
-	K.insert(K.end(), tag0x99Raw.begin(), tag0x99Raw.end());
-	print_vector_hex(K, "k_not_filled");
-
-	/* D4.1.j.iii. Вычисления MAC с ksMac (заполнение не далется, ибо getMAC сам заполняет ввод) */
-	vector<UINT8> CC = mac.getMAC(K, ksMac);
-	print_vector_hex(CC, "CC");
-
-	/* D4.1.j.iv. Сравнение с данными DO'8E RAPDU */
-	cout << (CC_resp == CC) << endl;
+	APDU::APDU readAPDU(0x00, 0xB0, 0x00, 0x00, {}, 0x0A);
+	APDU::SecureAPDU secureReadAPDU(readAPDU);
+	responceRaw = sendReadEFCOM(reader, secureReadAPDU.generateRawSecureAPDU(ksEnc, ksMac, SSC));
+	APDU::SecureRAPDU readResponce(responceRaw, SSC, ksMac, ksEnc);
+	if (readResponce.isResponceOK()) {
+		print_vector_hex(readResponce.getResponceData(), "Responce");
+	}
 
 	return 0;
 }
