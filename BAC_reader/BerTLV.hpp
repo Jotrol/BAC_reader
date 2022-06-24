@@ -2,13 +2,14 @@
 
 #include "Util.hpp"
 
-#include <windef.h>
-#include <iosfwd>
 #include <map>
 #include <vector>
+#include <fstream>
 using namespace std;
 
 namespace BerTLV {
+	typedef basic_fstream<unsigned char> BerStream;
+
 	/* Классы тега */
 	enum class BerTagClass { UNIVERSAL, APPLICATION, CONTEXT_SPECIFIC, PRIVATE };
 
@@ -41,7 +42,7 @@ namespace BerTLV {
 		INT16 berParentIndex;
 
 		/* Функция получения тега */
-		BerTagTuple decodeTag(istream& stream) {
+		BerTagTuple decodeTag(BerStream& stream) {
 			/* Сначала получаем байт тега */
 			UINT8 firstByte = stream.get();
 
@@ -72,7 +73,7 @@ namespace BerTLV {
 		}
 
 		/* Функция получения  */
-		BerLenTuple decodeLength(istream& stream) {
+		BerLenTuple decodeLength(BerStream& stream) {
 			/* Считываем первый байт длины */
 			UINT8 firstByte = stream.get();
 
@@ -103,7 +104,7 @@ namespace BerTLV {
 	public:
 		BerTLVDecoderToken() = default;
 
-		BerTLVDecoderToken(istream& stream, INT16 parentIdx) {
+		BerTLVDecoderToken(BerStream& stream, INT16 parentIdx) {
 			/* Декодируем тег */
 			BerTagTuple tagTuple = decodeTag(stream);
 
@@ -141,15 +142,6 @@ namespace BerTLV {
 		/* Получить родителя тега */
 		UINT16 getParent() { return berParentIndex; }
 
-		/* Функция для получения данных тега */
-		vector<UINT8> getData(istream& stream) {
-			stream.seekg(berDataStart);
-
-			vector<UINT8> data(berLen, 0);
-			stream.read((char*)data.data(), berLen);
-			return data;
-		}
-
 		/* В теории, можно сделать класс декодера дружественным этому */
 		/* Чтобы избежать лишних функций */
 	};
@@ -158,7 +150,7 @@ namespace BerTLV {
 	class BerTLVDecoder {
 	private:
 		/* Функция декодирования, которая вызывается типа рекурсивно */
-		UINT16 decode(istream& stream, INT16 parentIndex, UINT32 parentTokenEnd) {
+		UINT16 decode(BerStream& stream, INT16 parentIndex, UINT32 parentTokenEnd) {
 			/* Получив конец данных, функция знает, когда стоит остановиться */
 			while (stream.tellg() < parentTokenEnd) {
 				/* Создать новый токен */
@@ -220,7 +212,7 @@ namespace BerTLV {
 		BerTLVDecoder() : tokens(new BerTLVDecoderToken[tokenMaxSize]) {}
 
 		/* Функция декодирования */
-		UINT16 decode(istream& stream) {
+		UINT16 decode(BerStream& stream) {
 			/* Получаем размер потока данных */
 			stream.seekg(0, ios::end);
 			UINT32 streamLen = (UINT32)stream.tellg();
@@ -234,7 +226,7 @@ namespace BerTLV {
 		/* Способ получить индекс токена по его тегу внутри составного тега */
 		UINT16 getChildByTag(INT16 parent, UINT64 childTag) {
 			/* Начинаем с первого тега под родителем (так как в массиве они находятся подряд) */
-			for (UINT16 i = parent + 1; i < tokenSize; i += 1) {
+			for (UINT16 i = parent; i < tokenSize; i += 1) {
 				/* Получаем токен по индексу */
 				BerTLVDecoderToken* token = &tokens[i];
 
@@ -261,7 +253,7 @@ namespace BerTLV {
 			return &tokens[tokenIndex];
 		}
 
-		vector<UINT8> getTokenRaw(istream& file, UINT16 tokenIndex) {
+		vector<UINT8> getTokenRaw(BerStream& file, UINT16 tokenIndex) {
 			/* Если каким-то образом индекс больше текущего размера массива */
 			if (tokenIndex > tokenSize) {
 				/* То вернуть нулевой указатель */
@@ -279,8 +271,19 @@ namespace BerTLV {
 
 			vector<UINT8> rawToken(tokenRawLen, 0);
 			file.seekg(tokenRawStart);
-			file.read((char*)rawToken.data(), tokenRawLen);
+			file.read(rawToken.data(), tokenRawLen);
 			return rawToken;
+		}
+
+		/* Функция для получения данных тега */
+		vector<UINT8> getTokenData(BerStream& stream, UINT16 tokenIndex) {
+			BerTLVDecoderToken* token = &tokens[tokenIndex];
+			stream.seekg(token->getDataStart());
+
+			UINT32 tokenDataLen = token->getDataLen();
+			vector<UINT8> data(tokenDataLen, 0);
+			stream.read(data.data(), tokenDataLen);
+			return data;
 		}
 	};
 

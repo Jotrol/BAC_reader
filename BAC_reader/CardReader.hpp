@@ -8,13 +8,6 @@ using namespace std;
 
 #pragma comment(lib, "winscard.lib")
 
-struct Responce {
-	vector<BYTE> responceData;
-
-	unsigned char SW1;
-	unsigned char SW2;
-};
-
 class CardReader {
 private:
 	SCARDCONTEXT hScardContext;
@@ -92,7 +85,7 @@ public:
 	}
 
 	/* Функция отправки команды */
-	Responce SendCommand(vector<BYTE> commandAPDU) const {
+	vector<BYTE> SendCommand(vector<BYTE> commandAPDU) const {
 		/* Выделение буфера на 256 значений  */
 		DWORD bufferSize = 256;
 		DWORD apduSize = (DWORD)commandAPDU.size();
@@ -124,15 +117,8 @@ public:
 			}
 		}
 
-		/* Получаем код ответа */
-		unsigned char SW1 = buffer[(size_t)(bufferSize - 2)];
-		unsigned char SW2 = buffer[(size_t)(bufferSize - 1)];
-
-		/* Уменьшаем размер буфера ровно до размера данных */
-		buffer.resize((size_t)(bufferSize - 2));
-
 		/* Производим перемещение буфера в структуру ответа, а также записываем коды ответа */
-		return { move(buffer), SW1, SW2 };
+		return buffer;
 	}
 
 	~CardReader() {

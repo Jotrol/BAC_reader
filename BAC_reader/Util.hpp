@@ -2,7 +2,6 @@
 
 #include <string>
 #include <random>
-#include <windef.h>
 
 namespace Util {
 #define IS_LITTLE_ENDIAN  ('ABCD'==0x41424344UL)
@@ -51,5 +50,17 @@ namespace Util {
 		}
 
 		return output;
+	}
+
+	template<typename T>
+	vector<UINT8> castToVector(T val) {
+		UINT8 valRaw[sizeof(T)] = { 0 };
+		memcpy(valRaw, &val, sizeof(T));
+
+		vector<UINT8> out;
+		for (int i = sizeof(T) - 1; i > -1; i -= 1) {
+			out.push_back(valRaw[i]);
+		}
+		return out;
 	}
 }

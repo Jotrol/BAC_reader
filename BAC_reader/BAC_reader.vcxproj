@@ -147,6 +147,7 @@
     <ClCompile Include="main.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="APDU.hpp" />
     <ClInclude Include="BerTLV.hpp" />
     <ClInclude Include="CardReader.hpp" />
     <ClInclude Include="Crypto.hpp" />
