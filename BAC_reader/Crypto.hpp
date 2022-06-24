@@ -325,6 +325,14 @@ namespace Crypto {
 
 	typedef SymmetricEncryptionAlgorithm<SymmetricAlgName::TripleDES, SymmetricAlgMode::CBC> Des3;
 	typedef HashingAlgorithm<HashAlgName::SHA1> Sha1;
+
+	static Des3 des3;
+	static RetailMAC mac;
+	static Sha1 sha1;
+
+	Sha1& getSha1Alg() { return sha1; }
+	Des3& getDes3Alg() { return des3; }
+	RetailMAC& getMacAlg() { return mac; }
 }
 
 #ifdef TEST_CRYPTO

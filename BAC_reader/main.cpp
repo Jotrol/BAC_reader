@@ -11,7 +11,7 @@
 using namespace std;
 
 pair< vector<BYTE>, vector<BYTE>> generateKeyPair(const vector<BYTE>& kSeed) {
-	Crypto::Sha1 sha1;
+	Crypto::Sha1& sha1 = Crypto::getSha1Alg();
 
 	vector<BYTE> encAppend = { 0x00, 0x00, 0x00, 0x01 };
 	vector<BYTE> macAppend = { 0x00, 0x00, 0x00, 0x02 };
@@ -29,8 +29,8 @@ pair< vector<BYTE>, vector<BYTE>> generateKeyPair(const vector<BYTE>& kSeed) {
 	return { kEnc, kMac };
 }
 tuple<vector<BYTE>, vector<BYTE>, vector<BYTE>> getKeysToEncAndMac(string mrzLine2) {
-	Crypto::RetailMAC mac;
-	Crypto::Sha1 sha1;
+	Crypto::RetailMAC& mac = Crypto::getMacAlg();
+	Crypto::Sha1& sha1 = Crypto::getSha1Alg();
 
 	DecoderMRZLine2 mrzDecoder(mrzLine2);
 	auto mrzData = mrzDecoder.ComposeData();
@@ -59,7 +59,6 @@ vector<BYTE> castToVector(T val) {
 vector<BYTE> SelectApp = { 0x00, 0xA4, 0x04, 0x0C, 0x07, 0xA0, 0x00, 0x00, 0x02, 0x47, 0x10, 0x01 };
 vector<BYTE> GetICC = { 0x00, 0x84, 0x00, 0x00, 0x08 };
 vector<BYTE> MUTUAL_AUTH = { 0x00, 0x82, 0x00, 0x00, 0x28 };
-vector<BYTE> SelectCOM = { 0x00, 0xA4, 0x02, 0x0C, 0x02, 0x01, 0x0E };
 
 #include <random>
 #include <ctime>
@@ -82,7 +81,7 @@ inline bool RESPONCE_OK(const Responce& responce) {
 	return (responce.SW1 == 0x90 && responce.SW2 == 0x00);
 }
 
-#define REAL_TEST
+//#define REAL_TEST
 
 #ifdef REAL_TEST
 	string getMRZCode() {
@@ -146,7 +145,9 @@ inline bool RESPONCE_OK(const Responce& responce) {
 	}
 #else
 	vector<BYTE> expectedCmdData = { 0x72, 0xC2, 0x9C, 0x23, 0x71, 0xCC, 0x9B, 0xDB, 0x65, 0xB7, 0x79, 0xB8, 0xE8, 0xD3, 0x7B, 0x29, 0xEC, 0xC1, 0x54, 0xAA, 0x56, 0xA8, 0x79, 0x9F, 0xAE, 0x2F, 0x49, 0x8F, 0x76, 0xED, 0x92, 0xF2, 0x5F, 0x14, 0x48, 0xEE, 0xA8, 0xAD, 0x90, 0xA7 };
-	vector<BYTE> expectedAPDUEFCOM = { 0x0C, 0xA4, 0x02, 0x0C, 0x15, 0x87, 0x09, 0x01, 0x63, 0x75, 0x43, 0x29, 0x08, 0xC0, 0x44, 0xF6, 0x8E, 0x08, 0xBF, 0x8B, 0x92, 0xD6, 0x35, 0xFF, 0x24, 0xF8, 0x00 };
+
+	/* Если верить стандарту (а надо), то в конце может быть записано двухбайтное Le, либо 0x00 (если Le = 0) или 0x00 0x00 (потому что два байта). Два нулевых байта можно */
+	vector<BYTE> expectedAPDUEFCOM = { 0x0C, 0xA4, 0x02, 0x0C, 0x15, 0x87, 0x09, 0x01, 0x63, 0x75, 0x43, 0x29, 0x08, 0xC0, 0x44, 0xF6, 0x8E, 0x08, 0xBF, 0x8B, 0x92, 0xD6, 0x35, 0xFF, 0x24, 0xF8, 0x00, 0x00 };
 
 	string getMRZCode() { return "L898902C<3UTO6908061F9406236ZE184226B<<<<<14"; }
 	vector<BYTE> generateRndIFD() { return { 0x78, 0x17, 0x23, 0x86, 0x0C, 0x06, 0xC2, 0x26 }; }
@@ -162,67 +163,184 @@ inline bool RESPONCE_OK(const Responce& responce) {
 		return SSC;
 	}
 	vector<BYTE> sendAPDUEFCOM(const CardReader& reader, const vector<BYTE>& apdu) {
+		print_vector_hex(apdu, "APDU        ");
+		print_vector_hex(expectedAPDUEFCOM, "expectedAPDU");
 		assert(apdu == expectedAPDUEFCOM);
 		return { 0x99, 0x02, 0x90, 0x00, 0x8E, 0x08, 0xFA, 0x85, 0x5A, 0x5D, 0x4C, 0x50, 0xA8, 0xED, 0x90, 0x00 };
 	}
 #endif
 
-vector<BYTE> generateCommand(BYTE INS, BYTE P1, BYTE P2) {
-	return { 0x0C, INS, P1, P2 };
-}
-vector<BYTE> generateDO87(Crypto::Des3& des3, const vector<BYTE>& kEnc, const vector<BYTE>& commandData) {
-	/* Здесь данные копируются, а затем дополняются до размера блока пл стандарту ISO 9797-1 */
-	vector<BYTE> encCommandData = Crypto::fillISO9797(commandData, des3.getBlockLen());
-	encCommandData = des3.encrypt(encCommandData, kEnc);
+enum fieldsAPDU {CLA, INS, P1, P2};
+class APDU {
+protected:
+	union {
+		BYTE commandRaw[4];
+		UINT32 commandTag;
+	} commandHeader;
+	vector<BYTE> commandData;
+	UINT16 Le;
+public:
+	APDU(BYTE CLA = 0, BYTE INS = 0, BYTE P1 = 0, BYTE P2 = 0, const vector<BYTE>& data = {}, UINT16 le = 0) {
+		commandHeader.commandRaw[fieldsAPDU::CLA] = CLA;
+		commandHeader.commandRaw[fieldsAPDU::INS] = INS;
+		commandHeader.commandRaw[fieldsAPDU::P1] = P1;
+		commandHeader.commandRaw[fieldsAPDU::P2] = P2;
+		commandData = data;
+		Le = le;
+	}
+	void setCommandField(fieldsAPDU field, BYTE val) {
+		commandHeader.commandRaw[field] = val;
+	}
+	void setCommandData(const vector<BYTE>& newData) {
+		commandData = newData;
+	}
+	void appendCommandData(const vector<BYTE>& addData) {
+		commandData.insert(commandData.end(), addData.begin(), addData.end());
+	}
+};
+class SecureAPDU : public APDU {
+	vector<BYTE> commandMac;
 
-	/* Добавление '1' в начале зашифрованных данных; так в стандарте сказано */
-	encCommandData.insert(encCommandData.begin(), '1');
+	BerTLV::BerTLVCoderToken generateDO87(const vector<BYTE>& ksEnc) {
+		/* Получим алгоритм шифрования */
+		Crypto::Des3& des3 = Crypto::getDes3Alg();
 
-	BerTLV::BerTLVCoderToken encDataToken(0x87);
-	encDataToken.addData(encCommandData);
+		/* Создадим тег для DO87 */
+		BerTLV::BerTLVCoderToken tokenDO87(0x87);
 
-	return encDataToken.encode();
-}
-vector<BYTE> generateDO87MAC(Crypto::RetailMAC& mac, const vector<BYTE>& ksMAC, const vector<BYTE>& commandHeader, const vector<BYTE>& DO87, UINT64& SSC) {
-	/* Увеличиваем SSC и получаем его байты */
-	SSC += 1;
-	vector<BYTE> N = castToVector(SSC);
+		/* Если длина данных равна нулю, то DO87 не генерируется */
+		if (this->commandData.size() != 0) {
+			/* Сначала зашифруем данные */
+			vector<BYTE> dataFilled = Crypto::fillISO9797(this->commandData, des3.getBlockLen());
+			vector<BYTE> encrypted = des3.encrypt(dataFilled, ksEnc);
 
-	/* Заполняем заголовок */
-	vector<BYTE> filledCommandHeader = Crypto::fillISO9797(commandHeader, mac.getBlockLen());
+			/* Добавление 0x01 в начале зашифрованных данных; так в стандарте сказано */
+			encrypted.insert(encrypted.begin(), 0x01);
+
+			/* Добавим зашифрованные данные в тег 0x87 */
+			tokenDO87.addData(encrypted);
+		}
+		
+		return tokenDO87;
+	}
 	
-	/* Конкатенация SSC, заголовка сообщения и DO87 */
-	N.insert(N.end(), filledCommandHeader.begin(), filledCommandHeader.end());
-	N.insert(N.end(), DO87.begin(), DO87.end());
+	BerTLV::BerTLVCoderToken generateDO97(UINT16 Le) {
+		/* Создаём тег 0x97, в котором будет лежать длина */
+		BerTLV::BerTLVCoderToken tokenDO97(0x97);
 
-	/* Вычисление MAC */
-	return mac.getMAC(N, ksMAC);
-}
-vector<BYTE> createDO8E(const vector<BYTE>& do87Mac) {
-	BerTLV::BerTLVCoderToken do8E(0x8E);
-	do8E.addData(do87Mac);
-	return do8E.encode();
-}
-vector<BYTE> createAPDU(const vector<BYTE>& commandHeader, const vector<BYTE>& DO87, const vector<BYTE>& DO8E) {
-	UINT64 apduTag = 0;
-	for (UINT i = 0; i < commandHeader.size(); i += 1) {
-		apduTag = (apduTag << 8) | (commandHeader[i] & 0xFF);
+		/* Если длина ожидаемых данных не ноль */
+		if (Le != 0) {
+			/* Получаем отображение числа в памяти */
+			BYTE NeRaw[sizeof(Le)] = { 0 };
+			memcpy(NeRaw, &Le, sizeof(Le));
+
+			/* Ищём первый ненулевой байт в этом числе */
+			UINT8 nonZeroIndex = 0;
+			for (; nonZeroIndex < sizeof(Le) && !NeRaw[nonZeroIndex]; nonZeroIndex += 1);
+
+			/* Получаем длину числа в байтах */
+			UINT32 neRawLen = sizeof(Le) - nonZeroIndex;
+
+			/* Добавляем в токен байты длины */
+			tokenDO97.addData(NeRaw + nonZeroIndex, neRawLen);
+		}
+		
+		return tokenDO97;
 	}
 
-	BerTLV::BerTLVCoderToken apduToken(apduTag);
-	apduToken.addData(DO87);
-	apduToken.addData(DO8E);
-	apduToken.addData("\x00", 1);
-	return apduToken.encode();
-}
+	BerTLV::BerTLVCoderToken generateDO8E(const vector<BYTE>& ksMac, UINT64& SSC, const BerTLV::BerTLVCoderToken& DO87, const BerTLV::BerTLVCoderToken& DO97) {
+		Crypto::RetailMAC& mac = Crypto::getMacAlg();
+
+		/* Увеличиваем SSC на 1 */
+		SSC += 1;
+
+		/* Получаем его байты и генерируем конкатенацию SSC, заполненной команды, DO87 и DO97 */
+		vector<BYTE> concat = castToVector(SSC);
+
+		/* Добавляем байты команды для генерирования заполнения */
+		for (INT i = 0; i < sizeof(this->commandHeader.commandRaw); i += 1) {
+			concat.push_back(this->commandHeader.commandRaw[i]);
+		}
+
+		/* Генерация заполнения */
+		concat = Crypto::fillISO9797(concat, mac.getBlockLen());
+
+		/* После заполнения добавляем DO87 и DO97 (конечно, если они не нулевые) */
+		if (DO87.getDataLen() != 0) {
+			vector<BYTE> encDO87 = DO87.encode();
+			concat.insert(concat.end(), encDO87.begin(), encDO87.end());
+		}
+		if (DO97.getDataLen() != 0) {
+			vector<BYTE> encDO97 = DO97.encode();
+			concat.insert(concat.end(), encDO97.begin(), encDO97.end());
+		}
+
+		/* Без заполнения, потому что алгоритм getMAC сам это умеет делать */
+		commandMac = mac.getMAC(concat, ksMac);
+
+		/* Формируем BER-TLV тег с номером 0x8E */
+		BerTLV::BerTLVCoderToken tokenDO8E(0x8E);
+		tokenDO8E.addData(commandMac);
+		return tokenDO8E;
+	}
+public:
+	/* Выполняется копирование данных исходной APDU команды */
+	SecureAPDU(const APDU& apduCommand) : APDU(apduCommand) {
+		/* Маскируем байт класса, по стандарту */
+		this->setCommandField(fieldsAPDU::CLA, 0x0C);
+	}
+
+	vector<BYTE> generateRawSecureAPDU(const vector<BYTE>& ksEnc, const vector<BYTE>& ksMac, UINT64& SSC) {
+		/* Генерируем части APDU ответа в виде токенов BER-TLV */
+		BerTLV::BerTLVCoderToken tokenDO87 = this->generateDO87(ksEnc);
+		BerTLV::BerTLVCoderToken tokenDO97 = this->generateDO97(this->Le);
+		BerTLV::BerTLVCoderToken tokenDO8E = this->generateDO8E(ksMac, SSC, tokenDO87, tokenDO97);
+
+		/* Добавляем закодированные данные каждого токена в данные APDU тега */
+		/* У токенов прикол: они переводят число в Big Endian сами */
+		/* При этом, changeEndiannes реализовано так, что на BE машинах не происходит обмена байтами */
+		/* По этому, чтобы гарантировать однозначность, надо добавить эту функцию сюда */
+		/* Ибо после заполнения commandRaw в конструкторе APDU, тег станет на любой машине BE */
+		/* А на вход функции в LE машинах предполагается LE число. На BE предполагается BE */
+		/* но функция changeEndiannes на BE машинах ничего не делает */
+		BerTLV::BerTLVCoderToken apduToken(Util::changeEndiannes(this->commandHeader.commandTag));
+
+		/* Если данные не нулевые - то добавить */
+		if (tokenDO87.getDataLen() != 0) {
+			vector<BYTE> encTokenDO87 = tokenDO87.encode();
+			apduToken.addData(encTokenDO87);
+		}
+		if (tokenDO97.getDataLen() != 0) {
+			vector<BYTE> encTokenDO97 = tokenDO97.encode();
+			apduToken.addData(encTokenDO97);
+		}
+		if (tokenDO8E.getDataLen() != 0) {
+			vector<BYTE> encTokenDO8E = tokenDO8E.encode();
+			apduToken.addData(encTokenDO8E);
+		}
+
+		/* Формируем команду APDU */
+		vector<BYTE> apduCommand = apduToken.encode();
+
+		/* Получаем байты ожидаемой длины сообщения и вставляем их в конец закодированного APDU сообщения */
+		vector<BYTE> leBytes = castToVector(this->Le);
+		apduCommand.insert(apduCommand.end(), leBytes.begin(), leBytes.end());
+		return apduCommand;
+	}
+
+	vector<BYTE> getMessageMac() { return commandMac; }
+};
+class SecureRAPDU {
+
+};
 
 int main() {
 	srand((UINT)time(NULL));
 	setlocale(LC_ALL, "rus");
 
 	/* Инициализация шифрования и кпритографической подписи, кардридера */
-	Crypto::Des3 des3;
-	Crypto::RetailMAC mac;
+	Crypto::Des3& des3 = Crypto::getDes3Alg();
+	Crypto::RetailMAC& mac = Crypto::getMacAlg();
 
 	CardReader reader;
 	auto readersList = reader.GetReadersList();
@@ -294,27 +412,11 @@ int main() {
 	/* Получение счётчика посылаемых блоков */
 	size_t SSC = getSSC(rICC, rndIFD);
 
-	/* D4. Безопасный обмен сообщениями */
-	/* D4.1.a. Маскирование и заполнение байта класса */
-	vector<BYTE> commandHeader = generateCommand(0xA4, 0x02, 0x0C);
-
-	/* D4.1.b. Заполнение данных */
-	vector<BYTE> data = { 0x01, 0x1E };
-
-	/* D4.1.d. Построение DO'87 */
-	vector<BYTE> DO87 = generateDO87(des3, ksEnc, data);
-
-	/* D4.1.f.iii. Добавление заполнения (getMAC это делает сам) и вычисление MAC по N с ksMac */
-	vector<BYTE> CC = generateDO87MAC(mac, ksMac, commandHeader, DO87, SSC);
-
-	/* D4.1.g. Построение DO'8E */
-	vector<BYTE> DO8E = createDO8E(CC);
-
-	/* D4.1.h. Построение защищённой команды APDU */
-	vector<BYTE> APDU = createAPDU(commandHeader, DO87, DO8E);
+	APDU selectEFCOM(0x00, 0xA4, 0x02, 0xC, { 0x01, 0x1E });
+	SecureAPDU secureApdu(selectEFCOM);
 
 	/* D4.1.i. Отправка команды и получение ответа - RAPDU */
-	vector<BYTE> apduSendResponce = sendAPDUEFCOM(reader, APDU);
+	vector<BYTE> apduSendResponce = sendAPDUEFCOM(reader, secureApdu.generateRawSecureAPDU(ksEnc, ksMac, SSC));
 	if (apduSendResponce.size() == 0) { return 1; }
 
 	/* D4.1.j. Верификация RAPDU CC путем вычисления MAC DO'99 */
@@ -355,7 +457,7 @@ int main() {
 	print_vector_hex(K, "k_not_filled");
 
 	/* D4.1.j.iii. Вычисления MAC с ksMac (заполнение не далется, ибо getMAC сам заполняет ввод) */
-	CC = mac.getMAC(K, ksMac);
+	vector<BYTE> CC = mac.getMAC(K, ksMac);
 	print_vector_hex(CC, "CC");
 
 	/* D4.1.j.iv. Сравнение с данными DO'8E RAPDU */

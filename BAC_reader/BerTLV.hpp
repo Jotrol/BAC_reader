@@ -292,13 +292,13 @@ namespace BerTLV {
 		vector<UINT8> berData;
 		vector<UINT8> berTag;
 
-		UINT8 getFirstNonZeroByteIndex(UINT8* arr, UINT8 arrLen) {
+		UINT8 getFirstNonZeroByteIndex(UINT8* arr, UINT8 arrLen) const {
 			UINT8 nonZeroIndex = 0;
 			for (; nonZeroIndex < arrLen && !arr[nonZeroIndex]; nonZeroIndex += 1);
 			return nonZeroIndex;
 		}
 
-		vector<UINT8> encodeLen(UINT64 berLen) {
+		vector<UINT8> encodeLen(UINT64 berLen) const {
 			if (berLen < 0x80ULL) {
 				return { (UINT8)(berLen & 0xFF) };
 			}
@@ -315,7 +315,7 @@ namespace BerTLV {
 			}
 			return lenEnc;
 		}
-		vector<UINT8> encodeValue() {
+		vector<UINT8> encodeValue() const {
 			if (berTagType == BerTagType::PRIMITIVE) {
 				return berData;
 			}
@@ -350,7 +350,7 @@ namespace BerTLV {
 			}
 		}
 		
-		void addData(const char* data, UINT16 dataLen) {
+		void addData(const UINT8* data, UINT16 dataLen) {
 			for (int i = 0; i < dataLen; i += 1) {
 				berData.push_back(data[i]);
 			}
@@ -362,8 +362,15 @@ namespace BerTLV {
 			childTokens.push_back(child);
 		}
 
-		vector<UINT8> encode() {
+		vector<UINT8> encode() const {
+			/* Кодируем данные тега */
 			vector<UINT8> valEnc = encodeValue();
+
+			/* Если данных нет - то нет и тега, логично? */
+			if (valEnc.size() == 0) {
+				return {};
+			}
+
 			vector<UINT8> lenEnc = encodeLen(valEnc.size());
 
 			vector<UINT8> result;
@@ -372,6 +379,10 @@ namespace BerTLV {
 			result.insert(result.end(), valEnc.begin(), valEnc.end());
 
 			return result;
+		}
+
+		UINT64 getDataLen() const {
+			return berData.size();
 		}
 	};
 }
