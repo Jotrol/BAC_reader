@@ -163,6 +163,8 @@ int main() {
 	Crypto::Des3& des3 = Crypto::getDes3Alg();
 	Crypto::RetailMAC& mac = Crypto::getMacAlg();
 
+	vector<UINT8> datagroupData = {};
+
 	try {
 		CardReader reader;
 		auto readersList = reader.GetReadersList();
@@ -259,7 +261,7 @@ int main() {
 			return 1;
 		}
 
-		vector<UINT8> datagroupData = {};
+		datagroupData = {};
 		vector<UINT8> responceData = readResponce.getDecodedResponceData(ksEnc);
 		cout << "Считано " << responceData.size() << " байт" << endl;
 		print_vector_hex(responceData, "Данные");
@@ -267,7 +269,7 @@ int main() {
 
 		datagroupData.insert(datagroupData.end(), responceData.begin(), responceData.end());
 
-		UINT16 len = responceData[2] + 2;
+		UINT16 len = responceData[2];
 		cout << len << endl;
 
 		packetLen = 0xDF;
@@ -293,50 +295,65 @@ int main() {
 			offset += responceData.size();
 		}
 
-		for (UINT16 i = offset; i < len; i += 1) {
-			APDU::APDU readAPDUDG2(0x00, 0xB0, (offset >> 8) & 0xFF, offset & 0xFF, {}, 0x01);
-			APDU::SecureAPDU secureReadAPDUDG2(readAPDUDG2);
+		APDU::APDU readAPDUDG2(0x00, 0xB0, (offset >> 8) & 0xFF, offset & 0xFF, {}, len - offset - 2);
+		APDU::SecureAPDU secureReadAPDUDG2(readAPDUDG2);
 
-			vector<UINT8> secureAPDU = secureReadAPDUDG2.generateRawSecureAPDU(ksEnc, ksMac, SSC);
-			responceRaw = sendReadEFCOM(reader, secureAPDU);
-			APDU::SecureRAPDU readDG2Responce(responceRaw, SSC, ksMac);
+		vector<UINT8> secureAPDU = secureReadAPDUDG2.generateRawSecureAPDU(ksEnc, ksMac, SSC);
+		responceRaw = sendReadEFCOM(reader, secureAPDU);
+		APDU::SecureRAPDU readDG2Responce(responceRaw, SSC, ksMac);
 
-			responceData = readDG2Responce.getDecodedResponceData(ksEnc);
-			datagroupData.insert(datagroupData.end(), responceData.begin(), responceData.end());
-			if (!readDG2Responce.isResponceOK()) {
-				cerr << "Ошибка 4" << endl;
-				return 1;
-			}
-			cout << "Считано " << responceData.size() << " байт" << endl;
-			print_vector_hex(responceData, "Данные");
-			cout << endl;
+		responceData = readDG2Responce.getDecodedResponceData(ksEnc);
+		datagroupData.insert(datagroupData.end(), responceData.begin(), responceData.end());
+		if (!readDG2Responce.isResponceOK()) {
+			cerr << "Ошибка 4" << endl;
+			return 1;
 		}
+		cout << "Считано " << responceData.size() << " байт" << endl;
+		print_vector_hex(responceData, "Данные");
+		cout << endl;
+		
+		basic_ofstream<UINT8> file("file.bin", ios::binary);
+		file.write(datagroupData.data(), datagroupData.size());
+		file.close();
 
-		BerTLV::BerStream DG2("file.bin", ios::binary);
-		DG2.write(datagroupData.data(), datagroupData.size());
-		DG2.seekg(0);
+		BerTLV::BerStream DG1("file.bin", ios::binary | ios::in);
+		if (!DG1.is_open()) {
+			throw std::exception("Ошибка: файл file.bin не был открыт");
+		}
+		DG1.seekg(0);
 
 		BerTLV::BerTLVDecoder decoder;
-		UINT16 rootIndex = decoder.decode(DG2);
-		UINT16 tag0x75 = decoder.getChildByTag(rootIndex, 0x75);
-		UINT16 tag0x7F60 = decoder.getChildByTag(tag0x75, 0x7F60);
-		UINT16 tag0x5F2E = decoder.getChildByTag(tag0x7F60, 0x5F2E);
-		vector<UINT8> tag0x5F2EData = decoder.getTokenData(DG2, tag0x5F2E);
-		DG2.close();
+		UINT16 rootIndex = decoder.decode(DG1);
+		UINT16 tag0x61 = decoder.getChildByTag(rootIndex, 0x61);
+		UINT16 tag0x5F1F = decoder.getChildByTag(tag0x61, 0x5F1F);
 
-		BerTLV::BerStream rawImageData(tmpfile());
-		rawImageData.write(tag0x5F2EData.data(), tag0x5F2EData.size());
-		rawImageData.seekg(0);
+		vector<UINT8> mrzData = decoder.getTokenData(DG1, tag0x5F1F);
+		for (INT i = 0; i < mrzData.size(); i += 1) {
+			cout << (char)mrzData[i];
+		}
+		cout << endl;
 
-		ImageContainer::Image_ISO19794_5_2006 image(rawImageData);
-		rawImageData.close();
+		//BerTLV::BerTLVDecoder decoder;
+		//UINT16 rootIndex = decoder.decode(DG2);
+		//UINT16 tag0x75 = decoder.getChildByTag(rootIndex, 0x75);
+		//UINT16 tag0x7F60 = decoder.getChildByTag(tag0x75, 0x7F60);
+		//UINT16 tag0x5F2E = decoder.getChildByTag(tag0x7F60, 0x5F2E);
+		//vector<UINT8> tag0x5F2EData = decoder.getTokenData(DG2, tag0x5F2E);
+		//DG2.close();
 
-		BYTE* imageRaw = image.getRawImage();
-		UINT32 imageRawSize = image.getRawImageSize();
+		//BerTLV::BerStream rawImageData(tmpfile());
+		//rawImageData.write(tag0x5F2EData.data(), tag0x5F2EData.size());
+		//rawImageData.seekg(0);
 
-		ImageContainer::ImageStream imageToSave("image.jpg", ios::binary);
-		imageToSave.write(imageRaw, imageRawSize);
-		imageToSave.close();
+		//ImageContainer::Image_ISO19794_5_2006 image(rawImageData);
+		//rawImageData.close();
+
+		//BYTE* imageRaw = image.getRawImage();
+		//UINT32 imageRawSize = image.getRawImageSize();
+
+		//ImageContainer::ImageStream imageToSave("image.jpg", ios::binary);
+		//imageToSave.write(imageRaw, imageRawSize);
+		//imageToSave.close();
 	}
 	catch (std::exception& e) {
 		cout << e.what() << endl;
