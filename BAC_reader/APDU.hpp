@@ -159,9 +159,9 @@ namespace APDU {
 			vector<UINT8> apduCommand = apduToken.encode();
 
 			/* Получаем байты ожидаемой длины сообщения и вставляем их в конец закодированного APDU сообщения */
-			//vector<UINT8> leUINT8s = getLeBytes(this->Le);
-			//apduCommand.insert(apduCommand.end(), leUINT8s.begin(), leUINT8s.end());
-			apduCommand.push_back(0x00);
+			vector<UINT8> leUINT8s = getLeBytes(this->Le);
+			apduCommand.insert(apduCommand.end(), leUINT8s.begin(), leUINT8s.end());
+			//apduCommand.push_back(0x00);
 			return apduCommand;
 		}
 
@@ -187,23 +187,23 @@ namespace APDU {
 				responceData.insert(responceData.begin(), responce.begin(), responce.begin() + responceSize - 2);
 			}
 		}
-
+		
 		UINT64 getResponceDataSize() const {
 			return responceData.size();
 		}
-		vector<UINT8> getResponceData() const {
+		virtual vector<UINT8> getResponceData() const {
 			return responceData;
 		}
 
-		bool isResponceOK() const {
+		virtual bool isResponceOK() const {
 			return (SW1 == 0x90) && (SW2 == 0x00);
 		}
 	};
-	class SecureRAPDU : private RAPDU {
+	class SecureRAPDU : public RAPDU {
 		bool isValid;
-		vector<UINT8> responceDO87Data;
+		vector<UINT8> responceDO87RawData;
 	public:
-		SecureRAPDU(const vector<UINT8>& responce, UINT64& SSC, const vector<BYTE>& ksMAC, const vector<BYTE>& ksEnc) : RAPDU(responce) {
+		SecureRAPDU(const vector<UINT8>& responce, UINT64& SSC, const vector<BYTE>& ksMAC) : RAPDU(responce) {
 			/* Получив ответ в виде защищённого RAPDU, его стоит дампнуть во временный файл */
 			BerTLV::BerStream berStream(tmpfile());
 
@@ -240,40 +240,41 @@ namespace APDU {
 
 			/* Получим MAC сообщения, который нам передали */
 			vector<UINT8> responceMAC = bertlvDecoder.getTokenData(berStream, do8EIndex);
-			
-			print_vector_hex(concat, "concat");
-			print_vector_hex(ksMAC, "ksMAC");
 
 			/* Посчитаем MAC сообщения сами */
 			Crypto::RetailMAC& mac = Crypto::getMacAlg();
 			vector<UINT8> computedMAC = mac.getMAC(concat, ksMAC);
 
 			isValid = (computedMAC == responceMAC);
-			if (!isValid) { return; }
+			if (!isValid) {
+				return;
+			}
 
 			if (do87Index != -1) {
-				Crypto::Des3& des3 = Crypto::getDes3Alg();
-				vector<UINT8> DO87RawData = bertlvDecoder.getTokenData(berStream, do87Index);
-
-				/* Исходные данные содержат 0x01 в начале зашифрованных данных */
-				/* Эту единицу надо убрать */
-				UINT64 rawDataLen = DO87RawData.size();
-				vector<UINT8> DO87Data(DO87RawData.begin() + 1, DO87RawData.end());
-				if (DO87Data.size() % des3.getBlockLen() != 0) {
-					DO87Data = Crypto::fillISO9797(DO87Data, des3.getBlockLen());
-				}
-
-				responceDO87Data = des3.decrypt(DO87Data, ksEnc);
-				responceDO87Data.resize(rawDataLen - 1);
+				responceDO87RawData = bertlvDecoder.getTokenData(berStream, do87Index);
 			}
 		}
 
-		bool isResponceOK() const {
+		virtual bool isResponceOK() const {
 			return (SW1 == 0x90) && (SW2 == 0x00) && isValid;
 		}
 
-		vector<UINT8> getResponceData() const {
-			return responceDO87Data;
+		vector<UINT8> getDecodedResponceData(const vector<BYTE>& ksEnc) const {
+			if (responceDO87RawData.size() == 0) { return {}; }
+
+			/* Получаем алгоритм DES3 и убираем единицу с начала данных */
+			Crypto::Des3& des3 = Crypto::getDes3Alg();
+			vector<UINT8> deshrinked(responceDO87RawData.begin() + 1, responceDO87RawData.end());
+
+			/* Дешифрация данных */
+			vector<UINT8> decipher = des3.decrypt(deshrinked, ksEnc);
+
+			/* Убираем заполнение */
+			INT find0x80 = decipher.size() - 1;
+			for (; decipher[find0x80] != 0x80 && find0x80 > -1; find0x80 -= 1);
+
+			decipher.resize(find0x80);
+			return decipher;
 		}
 	};
 }

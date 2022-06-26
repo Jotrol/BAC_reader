@@ -5,6 +5,7 @@
 #include "MRZDecoder.hpp"
 #include "BerTLV.hpp"
 #include "APDU.hpp"
+#include "ImageContainer.hpp"
 
 #include <fstream>
 #include <sstream>
@@ -162,93 +163,183 @@ int main() {
 	Crypto::Des3& des3 = Crypto::getDes3Alg();
 	Crypto::RetailMAC& mac = Crypto::getMacAlg();
 
-	CardReader reader;
-	auto readersList = reader.GetReadersList();
+	try {
+		CardReader reader;
+		auto readersList = reader.GetReadersList();
 
-	cin.get();
-	reader.CardConnect(readersList[0]);
+		cin.get();
+		reader.CardConnect(readersList[0]);
 
-	/* D1, D2. Получение ключей для шифрования, MAC и генерации ключевых пар */
-	/* Из MRZ кода второй строки */
-	auto tuple = getKeysToEncAndMac(getMRZCode());
-	auto& kEnc = std::get<0>(tuple);
-	auto& kMac = std::get<1>(tuple);
-	auto& kSeed = std::get<2>(tuple);
+		/* D1, D2. Получение ключей для шифрования, MAC и генерации ключевых пар */
+		/* Из MRZ кода второй строки */
+		auto tuple = getKeysToEncAndMac(getMRZCode());
+		auto& kEnc = std::get<0>(tuple);
+		auto& kMac = std::get<1>(tuple);
+		auto& kSeed = std::get<2>(tuple);
 
-	/* D3.1. Получение случайного числа от карты */
-	vector<UINT8> rICC = getICC(reader);
-	if (rICC.size() == 0) { return 1; }
+		/* D3.1. Получение случайного числа от карты */
+		vector<UINT8> rICC = getICC(reader);
+		if (rICC.size() == 0) { return 1; }
 
-	/* D3.2. Генерация случайных чисел для обмена ключами */
-	vector<UINT8> rndIFD = generateRndIFD();
-	vector<UINT8> kIFD = generateKIFD();
+		/* D3.2. Генерация случайных чисел для обмена ключами */
+		vector<UINT8> rndIFD = generateRndIFD();
+		vector<UINT8> kIFD = generateKIFD();
 
-	/* D3.3. Конкатенация rndIFD, rICC и kIFD */
-	vector<UINT8> S(rndIFD);
-	S.insert(S.end(), rICC.begin(), rICC.end());
-	S.insert(S.end(), kIFD.begin(), kIFD.end());
+		/* D3.3. Конкатенация rndIFD, rICC и kIFD */
+		vector<UINT8> S(rndIFD);
+		S.insert(S.end(), rICC.begin(), rICC.end());
+		S.insert(S.end(), kIFD.begin(), kIFD.end());
 
-	/* D3.4. Шифрование S ключом kEnc; отсекаются лишние байты, так как нужны только 32 байта */
-	auto E_IFD = des3.encrypt(S, kEnc);
-	E_IFD.resize(32);
+		/* D3.4. Шифрование S ключом kEnc; отсекаются лишние байты, так как нужны только 32 байта */
+		auto E_IFD = des3.encrypt(S, kEnc);
+		E_IFD.resize(32);
 
-	/* D3.5. Вычисление MAC по E_IFD ключом 3DES kMac */
-	auto M_IFD = mac.getMAC(E_IFD, kMac);
+		/* D3.5. Вычисление MAC по E_IFD ключом 3DES kMac */
+		auto M_IFD = mac.getMAC(E_IFD, kMac);
 
-	/* D3.6. Формирование APDU команды EXTERNAL AUTHENTICATE и посылка команды МСПД */
-	vector<UINT8> cmdData;
-	cmdData.insert(cmdData.end(), E_IFD.begin(), E_IFD.end());
-	cmdData.insert(cmdData.end(), M_IFD.begin(), M_IFD.end());
+		/* D3.6. Формирование APDU команды EXTERNAL AUTHENTICATE и посылка команды МСПД */
+		vector<UINT8> cmdData;
+		cmdData.insert(cmdData.end(), E_IFD.begin(), E_IFD.end());
+		cmdData.insert(cmdData.end(), M_IFD.begin(), M_IFD.end());
 
-	vector<UINT8> resp_data = getMutualAuth(reader, cmdData);
-	if (resp_data.size() == 0) { return 1; }
+		vector<UINT8> resp_data = getMutualAuth(reader, cmdData);
+		if (resp_data.size() == 0) { return 1; }
 
-	/* D3.6.Система проверки */
-	vector<UINT8> E_ICC_RAW;
-	E_ICC_RAW.insert(E_ICC_RAW.begin(), resp_data.begin(), resp_data.begin() + 32);
-	vector<UINT8> M_ICC_RAW;
-	M_ICC_RAW.insert(M_ICC_RAW.begin(), resp_data.begin() + 32, resp_data.end());
+		/* D3.6.Система проверки */
+		vector<UINT8> E_ICC_RAW;
+		E_ICC_RAW.insert(E_ICC_RAW.begin(), resp_data.begin(), resp_data.begin() + 32);
+		vector<UINT8> M_ICC_RAW;
+		M_ICC_RAW.insert(M_ICC_RAW.begin(), resp_data.begin() + 32, resp_data.end());
 
-	auto M_ICC_CALC = mac.getMAC(E_ICC_RAW, kMac);
-	if (M_ICC_CALC != M_ICC_RAW) {
-		throw std::exception("Ошибка: MAC не совпал с ответом");
+		auto M_ICC_CALC = mac.getMAC(E_ICC_RAW, kMac);
+		if (M_ICC_CALC != M_ICC_RAW) {
+			throw std::exception("Ошибка: MAC не совпал с ответом");
+		}
+
+		auto E_ICC = des3.decrypt(E_ICC_RAW, kEnc);
+		vector<UINT8> RND_IFD;
+		RND_IFD.insert(RND_IFD.begin(), E_ICC.begin() + 8, E_ICC.begin() + 16);
+		if (RND_IFD != rndIFD) {
+			throw std::exception("Ошибка: RND.IFD не совпал");
+		}
+
+		vector<UINT8> kICC;
+		kICC.insert(kICC.begin(), E_ICC.begin() + 16, E_ICC.end());
+		for (int i = 0; i < kICC.size(); i += 1) {
+			kICC[i] = kICC[i] ^ kIFD[i];
+		}
+
+		auto keys = generateKeyPair(kICC);
+		auto& ksEnc = keys.first;
+		auto& ksMac = keys.second;
+
+		/* Получение счётчика посылаемых блоков */
+		size_t SSC = getSSC(rICC, rndIFD);
+
+		APDU::APDU selectEFCOM(0x00, 0xA4, 0x02, 0xC, { 0x01, 0x01 });
+		APDU::SecureAPDU secureApdu(selectEFCOM);
+
+		vector<UINT8> responceRaw = sendAPDUEFCOM(reader, secureApdu.generateRawSecureAPDU(ksEnc, ksMac, SSC));
+		APDU::SecureRAPDU secureResponce(responceRaw, SSC, ksMac);
+		if (!secureResponce.isResponceOK()) {
+			cerr << "Ошибка 1" << endl;
+			return 1;
+		}
+
+		UINT8 packetLen = 0x04;
+		APDU::APDU readAPDU(0x00, 0xB0, 0x00, 0x00, {}, packetLen);
+		APDU::SecureAPDU secureReadAPDU(readAPDU);
+
+		vector<UINT8> commandReadEfCOM = secureReadAPDU.generateRawSecureAPDU(ksEnc, ksMac, SSC);
+		responceRaw = sendReadEFCOM(reader, commandReadEfCOM);
+
+		APDU::SecureRAPDU readResponce(responceRaw, SSC, ksMac);
+		if (!readResponce.isResponceOK()) {
+			cerr << "Ошибка 2" << endl;
+			return 1;
+		}
+
+		vector<UINT8> datagroupData = {};
+		vector<UINT8> responceData = readResponce.getDecodedResponceData(ksEnc);
+		cout << "Считано " << responceData.size() << " байт" << endl;
+		print_vector_hex(responceData, "Данные");
+		cout << endl;
+
+		datagroupData.insert(datagroupData.end(), responceData.begin(), responceData.end());
+
+		UINT16 len = responceData[2] + 2;
+		cout << len << endl;
+
+		packetLen = 0xDF;
+		UINT16 offset = responceData.size();
+		while (offset < len) {
+			APDU::APDU readAPDUDG2(0x00, 0xB0, (offset >> 8) & 0xFF, offset & 0xFF, {}, 0xDF);
+			APDU::SecureAPDU secureReadAPDUDG2(readAPDUDG2);
+
+			vector<UINT8> secureAPDU = secureReadAPDUDG2.generateRawSecureAPDU(ksEnc, ksMac, SSC);
+			responceRaw = sendReadEFCOM(reader, secureAPDU);
+			APDU::SecureRAPDU readDG2Responce(responceRaw, SSC, ksMac);
+
+			responceData = readDG2Responce.getDecodedResponceData(ksEnc);
+			datagroupData.insert(datagroupData.end(), responceData.begin(), responceData.end());
+			if (!readDG2Responce.isResponceOK()) {
+				break;
+			}
+
+			cout << "Считано " << responceData.size() << " байт" << endl;
+			print_vector_hex(responceData, "Данные");
+			cout << endl;
+
+			offset += responceData.size();
+		}
+
+		for (UINT16 i = offset; i < len; i += 1) {
+			APDU::APDU readAPDUDG2(0x00, 0xB0, (offset >> 8) & 0xFF, offset & 0xFF, {}, 0x01);
+			APDU::SecureAPDU secureReadAPDUDG2(readAPDUDG2);
+
+			vector<UINT8> secureAPDU = secureReadAPDUDG2.generateRawSecureAPDU(ksEnc, ksMac, SSC);
+			responceRaw = sendReadEFCOM(reader, secureAPDU);
+			APDU::SecureRAPDU readDG2Responce(responceRaw, SSC, ksMac);
+
+			responceData = readDG2Responce.getDecodedResponceData(ksEnc);
+			datagroupData.insert(datagroupData.end(), responceData.begin(), responceData.end());
+			if (!readDG2Responce.isResponceOK()) {
+				cerr << "Ошибка 4" << endl;
+				return 1;
+			}
+			cout << "Считано " << responceData.size() << " байт" << endl;
+			print_vector_hex(responceData, "Данные");
+			cout << endl;
+		}
+
+		BerTLV::BerStream DG2("file.bin", ios::binary);
+		DG2.write(datagroupData.data(), datagroupData.size());
+		DG2.seekg(0);
+
+		BerTLV::BerTLVDecoder decoder;
+		UINT16 rootIndex = decoder.decode(DG2);
+		UINT16 tag0x75 = decoder.getChildByTag(rootIndex, 0x75);
+		UINT16 tag0x7F60 = decoder.getChildByTag(tag0x75, 0x7F60);
+		UINT16 tag0x5F2E = decoder.getChildByTag(tag0x7F60, 0x5F2E);
+		vector<UINT8> tag0x5F2EData = decoder.getTokenData(DG2, tag0x5F2E);
+		DG2.close();
+
+		BerTLV::BerStream rawImageData(tmpfile());
+		rawImageData.write(tag0x5F2EData.data(), tag0x5F2EData.size());
+		rawImageData.seekg(0);
+
+		ImageContainer::Image_ISO19794_5_2006 image(rawImageData);
+		rawImageData.close();
+
+		BYTE* imageRaw = image.getRawImage();
+		UINT32 imageRawSize = image.getRawImageSize();
+
+		ImageContainer::ImageStream imageToSave("image.jpg", ios::binary);
+		imageToSave.write(imageRaw, imageRawSize);
+		imageToSave.close();
 	}
-
-	auto E_ICC = des3.decrypt(E_ICC_RAW, kEnc);
-	vector<UINT8> RND_IFD;
-	RND_IFD.insert(RND_IFD.begin(), E_ICC.begin() + 8, E_ICC.begin() + 16);
-	if (RND_IFD != rndIFD) {
-		throw std::exception("Ошибка: RND.IFD не совпал");
-	}
-
-	vector<UINT8> kICC;
-	kICC.insert(kICC.begin(), E_ICC.begin() + 16, E_ICC.end());
-	for (int i = 0; i < kICC.size(); i += 1) {
-		kICC[i] = kICC[i] ^ kIFD[i];
-	}
-
-	auto keys = generateKeyPair(kICC);
-	auto& ksEnc = keys.first;
-	auto& ksMac = keys.second;
-
-	/* Получение счётчика посылаемых блоков */
-	size_t SSC = getSSC(rICC, rndIFD);
-
-	APDU::APDU selectEFCOM(0x00, 0xA4, 0x02, 0xC, { 0x01, 0x1E });
-	APDU::SecureAPDU secureApdu(selectEFCOM);
-
-	vector<UINT8> responceRaw = sendAPDUEFCOM(reader, secureApdu.generateRawSecureAPDU(ksEnc, ksMac, SSC));
-	APDU::SecureRAPDU secureResponce(responceRaw, SSC, ksMac, ksEnc);
-	if (secureResponce.isResponceOK()) {
-		cout << "Ура, всё ОК!" << endl;
-	}
-
-	APDU::APDU readAPDU(0x00, 0xB0, 0x00, 0x00, {}, 0x0A);
-	APDU::SecureAPDU secureReadAPDU(readAPDU);
-	responceRaw = sendReadEFCOM(reader, secureReadAPDU.generateRawSecureAPDU(ksEnc, ksMac, SSC));
-	APDU::SecureRAPDU readResponce(responceRaw, SSC, ksMac, ksEnc);
-	if (readResponce.isResponceOK()) {
-		print_vector_hex(readResponce.getResponceData(), "Responce");
+	catch (std::exception& e) {
+		cout << e.what() << endl;
 	}
 
 	return 0;

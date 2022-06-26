@@ -11,6 +11,8 @@
 using namespace std;
 
 namespace ImageContainer {
+	typedef basic_fstream<unsigned char> ImageStream;
+
 	/* Для декодирования заголовоков изображения используется стандарт ISO/IEC 19794-5-2006, а не 2013 */
 	/* Если понадобится, от всех заголовков можно будет избавиться */
 	class Image_ISO19794_5_2006 {
@@ -55,18 +57,18 @@ namespace ImageContainer {
 #pragma pack(pop)
 
 		/* Функции чтения каждого из блоков */
-		FaceImageHeader readFaceImageHeader(ifstream& file) {
+		FaceImageHeader readFaceImageHeader(ImageStream& file) {
 			FaceImageHeader faceImageHeader = { 0 };
-			file.read((char*)&faceImageHeader, sizeof(FaceImageHeader));
+			file.read((UINT8*)&faceImageHeader, sizeof(FaceImageHeader));
 
 			faceImageHeader.entryLen = Util::changeEndiannes(faceImageHeader.entryLen);
 			faceImageHeader.facesCount = Util::changeEndiannes(faceImageHeader.facesCount);
 
 			return faceImageHeader;
 		}
-		FaceInformation readFaceInformation(ifstream& file) {
+		FaceInformation readFaceInformation(ImageStream& file) {
 			FaceInformation faceInfo = { 0 };
-			file.read((char*)&faceInfo, sizeof(FaceInformation));
+			file.read((UINT8*)&faceInfo, sizeof(FaceInformation));
 
 			faceInfo.faceDataLen = Util::changeEndiannes(faceInfo.faceDataLen);
 			faceInfo.controlPointsCount = Util::changeEndiannes(faceInfo.controlPointsCount);
@@ -74,12 +76,12 @@ namespace ImageContainer {
 
 			return faceInfo;
 		}
-		vector<ControlPoint> readControlPoints(ifstream& file, UINT16 controlPointsCount) {
+		vector<ControlPoint> readControlPoints(ImageStream& file, UINT16 controlPointsCount) {
 			vector<ControlPoint> controlPoints(controlPointsCount);
 
 			ControlPoint point = { 0 };
 			for (int i = 0; i < controlPointsCount; i += 1) {
-				file.read((char*)&point, sizeof(ControlPoint));
+				file.read((UINT8*)&point, sizeof(ControlPoint));
 
 				point.coordX = Util::changeEndiannes(point.coordX);
 				point.coordY = Util::changeEndiannes(point.coordY);
@@ -90,9 +92,9 @@ namespace ImageContainer {
 
 			return controlPoints;
 		}
-		ImageInfo readImageInfo(ifstream& file) {
+		ImageInfo readImageInfo(ImageStream& file) {
 			ImageInfo imgInfo = { 0 };
-			file.read((char*)&imgInfo, sizeof(ImageInfo));
+			file.read((UINT8*)&imgInfo, sizeof(ImageInfo));
 
 			imgInfo.imageHorizontalSize = Util::changeEndiannes(imgInfo.imageHorizontalSize);
 			imgInfo.imageVerticalSize = Util::changeEndiannes(imgInfo.imageVerticalSize);
@@ -110,7 +112,7 @@ namespace ImageContainer {
 		FaceInformation faceInformation;
 		ImageInfo imageInfo;
 	public:
-		Image_ISO19794_5_2006(ifstream& file) {
+		Image_ISO19794_5_2006(ImageStream& file) {
 			faceImageHeader = readFaceImageHeader(file);
 
 			/* Необходимо запомнить смещение начала информации об блоке изображения */
@@ -124,7 +126,7 @@ namespace ImageContainer {
 
 			/* Выделяем память под данные изображения и считываем его */
 			imgData.reset(new BYTE[imgDataSize]);
-			file.read((char*)imgData.get(), imgDataSize);
+			file.read(imgData.get(), imgDataSize);
 		}
 
 		BYTE* getRawImage() const {
