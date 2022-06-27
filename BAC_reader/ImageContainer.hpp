@@ -256,6 +256,9 @@ namespace ImageContainer {
 			bmi.bmiHeader.biHeight = h;
 			bmi.bmiHeader.biBitCount = image.getBitsPerPixel();
 
+			/* В переменную пользовательских данных окна записываем указатель на класс */
+			SetWindowLongPtr(hWnd, GWLP_USERDATA, (LONG_PTR)this);
+
 			/* Изменить размер окна под стать новому изображению */
 			MoveWindow(hWnd, 0, 0, w, h, false);
 
