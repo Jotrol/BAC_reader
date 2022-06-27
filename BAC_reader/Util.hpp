@@ -3,6 +3,8 @@
 #include <string>
 #include <random>
 
+typedef vector<UINT8> ByteVec;
+
 namespace Util {
 #define IS_LITTLE_ENDIAN  ('ABCD'==0x41424344UL)
 
@@ -32,11 +34,11 @@ namespace Util {
 #endif
 
 	template<typename T>
-	vector<UINT8> castToVector(T val) {
+	ByteVec castToVector(T val) {
 		UINT8 valRaw[sizeof(T)] = { 0 };
 		memcpy(valRaw, &val, sizeof(T));
 
-		vector<UINT8> out;
+		ByteVec out = {};
 		for (int i = sizeof(T) - 1; i > -1; i -= 1) {
 			out.push_back(valRaw[i]);
 		}

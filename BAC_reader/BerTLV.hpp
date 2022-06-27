@@ -12,7 +12,7 @@ namespace BerTLV {
 
 	/* Декодирует длину указанного тега (который должен быть первым), т.е первый байт должен совпасть */
 	/* Использовать для определения длины файла */
-	UINT16 BerDecodeLenBytes(const vector<UINT8>& data, UINT8 berTag) {
+	UINT16 BerDecodeLenBytes(const ByteVec& data, UINT8 berTag) {
 		if (data[0] != berTag) {
 			return -1;
 		}
