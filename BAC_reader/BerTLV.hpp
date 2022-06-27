@@ -19,7 +19,7 @@ namespace BerTLV {
 
 		UINT8 startByte = data[1];
 		if (((startByte >> 7) & 1) == 0) {
-			return make_pair(startByte, 1);
+			return make_pair(startByte, 2);
 		}
 
 		UINT8 bytesCount = (startByte & 0x7F);

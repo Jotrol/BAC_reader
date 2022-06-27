@@ -241,7 +241,7 @@ int main() {
 		/* Получение счётчика посылаемых блоков */
 		size_t SSC = getSSC(rICC, rndIFD);
 
-		APDU::APDU selectEFCOM(0x00, 0xA4, 0x02, 0xC, { 0x01, 0x02 });
+		APDU::APDU selectEFCOM(0x00, 0xA4, 0x02, 0xC, { 0x01, 0x01 });
 		APDU::SecureAPDU secureApdu(selectEFCOM);
 
 		vector<UINT8> responceRaw = sendAPDUEFCOM(reader, secureApdu.generateRawSecureAPDU(ksEnc, ksMac, SSC));
@@ -271,7 +271,7 @@ int main() {
 		BerTLV::BerStream DG2("file.bin", ios::binary | ios::in | ios::out | ios::trunc);
 		DG2.write(responceData.data(), responceData.size());
 
-		auto lenPair = BerTLV::BerDecodeLenBytes(responceData, 0x75);
+		auto lenPair = BerTLV::BerDecodeLenBytes(responceData, 0x61);
 		UINT16 len = lenPair.first + lenPair.second;
 		cout << len << endl;
 
@@ -302,39 +302,39 @@ int main() {
 		
 		DG2.seekg(0);
 
-		//BerTLV::BerTLVDecoder decoder;
-		//UINT16 rootIndex = decoder.decode(DG2);
-		//UINT16 tag0x61 = decoder.getChildByTag(rootIndex, 0x61);
-		//UINT16 tag0x5F1F = decoder.getChildByTag(tag0x61, 0x5F1F);
-
-		//vector<UINT8> mrzData = decoder.getTokenData(DG2, tag0x5F1F);
-		//for (INT i = 0; i < mrzData.size(); i += 1) {
-		//	cout << (char)mrzData[i];
-		//}
-		//cout << endl;
-
 		BerTLV::BerTLVDecoder decoder;
 		UINT16 rootIndex = decoder.decode(DG2);
-		UINT16 tag0x75 = decoder.getChildByTag(rootIndex, 0x75);
-		UINT16 tag0x7F61 = decoder.getChildByTag(tag0x75, 0x7F61);
-		UINT16 tag0x7F60 = decoder.getChildByTag(tag0x7F61, 0x7F60);
-		UINT16 tag0x5F2E = decoder.getChildByTag(tag0x7F60, 0x5F2E);
-		vector<UINT8> tag0x5F2EData = decoder.getTokenData(DG2, tag0x5F2E);
-		DG2.close();
+		UINT16 tag0x61 = decoder.getChildByTag(rootIndex, 0x61);
+		UINT16 tag0x5F1F = decoder.getChildByTag(tag0x61, 0x5F1F);
 
-		BerTLV::BerStream rawImageData(tmpfile());
-		rawImageData.write(tag0x5F2EData.data(), tag0x5F2EData.size());
-		rawImageData.seekg(0);
+		vector<UINT8> mrzData = decoder.getTokenData(DG2, tag0x5F1F);
+		for (INT i = 0; i < mrzData.size(); i += 1) {
+			cout << (char)mrzData[i];
+		}
+		cout << endl;
 
-		ImageContainer::Image_ISO19794_5_2006 image(rawImageData);
-		rawImageData.close();
+		//BerTLV::BerTLVDecoder decoder;
+		//UINT16 rootIndex = decoder.decode(DG2);
+		//UINT16 tag0x75 = decoder.getChildByTag(rootIndex, 0x75);
+		//UINT16 tag0x7F61 = decoder.getChildByTag(tag0x75, 0x7F61);
+		//UINT16 tag0x7F60 = decoder.getChildByTag(tag0x7F61, 0x7F60);
+		//UINT16 tag0x5F2E = decoder.getChildByTag(tag0x7F60, 0x5F2E);
+		//vector<UINT8> tag0x5F2EData = decoder.getTokenData(DG2, tag0x5F2E);
+		//DG2.close();
 
-		BYTE* imageRaw = image.getRawImage();
-		UINT32 imageRawSize = image.getRawImageSize();
+		//BerTLV::BerStream rawImageData(tmpfile());
+		//rawImageData.write(tag0x5F2EData.data(), tag0x5F2EData.size());
+		//rawImageData.seekg(0);
 
-		ImageContainer::ImageStream imageToSave("image.jp2", ios::binary | ios::trunc | ios::out);
-		imageToSave.write(imageRaw, imageRawSize);
-		imageToSave.close();
+		//ImageContainer::Image_ISO19794_5_2006 image(rawImageData);
+		//rawImageData.close();
+
+		//BYTE* imageRaw = image.getRawImage();
+		//UINT32 imageRawSize = image.getRawImageSize();
+
+		//ImageContainer::ImageStream imageToSave("image.jp2", ios::binary | ios::trunc | ios::out);
+		//imageToSave.write(imageRaw, imageRawSize);
+		//imageToSave.close();
 	}
 	catch (std::exception& e) {
 		cout << e.what() << endl;
