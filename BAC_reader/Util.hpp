@@ -2,8 +2,11 @@
 
 #include <string>
 #include <random>
+#include <vector>
+#include <fstream>
 
-typedef vector<UINT8> ByteVec;
+typedef std::vector<UINT8> ByteVec;
+typedef std::basic_fstream<UINT8> ByteStream;
 
 namespace Util {
 #define IS_LITTLE_ENDIAN  ('ABCD'==0x41424344UL)

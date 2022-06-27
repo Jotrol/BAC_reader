@@ -104,15 +104,16 @@ namespace ImageContainer {
 			return imgInfo;
 		}
 
-		UINT32 imgDataSize;
-		unique_ptr<BYTE> imgData;
-		vector<ControlPoint> imgControlPoints;
+		UINT32 imgDataSize = 0;
+		unique_ptr<BYTE> imgData = {};
+		vector<ControlPoint> imgControlPoints = {};
 
-		FaceImageHeader faceImageHeader;
-		FaceInformation faceInformation;
-		ImageInfo imageInfo;
+		FaceImageHeader faceImageHeader = {};
+		FaceInformation faceInformation = {};
+		ImageInfo imageInfo = {};
 	public:
 		Image_ISO19794_5_2006(ImageStream& file) {
+			file.seekg(0);
 			faceImageHeader = readFaceImageHeader(file);
 
 			/* Необходимо запомнить смещение начала информации об блоке изображения */
@@ -148,14 +149,13 @@ namespace ImageContainer {
 	/* Класса окна просмотра изображений */
 	class ImageWindow {
 	private:
-		/* Хэндл изображения из библиотеки FreeImage */
 		fipImage image;
 
 		/* Информация об изображении для отображения в GDI */
-		BITMAPINFO bmi;
+		BITMAPINFO bmi = {0};
 
 		/* Хэндл окна просмотра */
-		HWND hWnd;
+		HWND hWnd = nullptr;
 
 		/* Название класса просмотра */
 		const wchar_t* ImageClassName = L"ImageWindow";
@@ -171,34 +171,7 @@ namespace ImageContainer {
 		}
 	public:
 		/* Конструктор класса просмотра изображения */
-		ImageWindow(HINSTANCE hInst, const Image& isoImage, HWND hParentWnd = nullptr, INT x = 0, INT y = 0) {
-			/* Из переданного контейнера изображения получаем изображение и обрамляем его в класс для FreeImage */
-			fipMemoryIO tempImage(isoImage.getRawImage(), isoImage.getRawImageSize());
-
-			/* Загружаем из памяти изображение */
-			if (!image.loadFromMemory(tempImage)) {
-				throw std::exception("Ошибка: не удалось загрузить фотографию");
-			}
-
-			/* Очищаем буфер */
-			tempImage.close();
-
-			/* Конвертируем изображение в 24-х битный формат */
-			/* Чтобы Windows сама определяла некоторые параметры изображения */
-			if (!image.convertTo24Bits()) {
-				throw std::exception("Ошибка: не удалось конвертировать фотографию");
-			}
-
-			/* Конструируем данные об изображении */
-			DWORD w = image.getWidth();
-			DWORD h = image.getHeight();
-			bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-			bmi.bmiHeader.biWidth = w;
-			bmi.bmiHeader.biHeight = h;
-			bmi.bmiHeader.biPlanes = 1;
-			bmi.bmiHeader.biCompression = BI_RGB;
-			bmi.bmiHeader.biBitCount = image.getBitsPerPixel();
-
+		ImageWindow(HINSTANCE hInst, string imgContainerPath, HWND hParentWnd = nullptr, INT x = 0, INT y = 0) {
 			/* Регистрация класса окна */
 			if (!RegisterImageWindowClass(hInst)) {
 				throw std::exception("Ошибка: не удалось зарегистрировать класс окна для изображений");
@@ -209,6 +182,24 @@ namespace ImageContainer {
 			if (hParentWnd) {
 				imageWindowStyle = WS_CHILD | WS_OVERLAPPED;
 			}
+
+			/* Загрузить из памяти FreeImage в изображение */
+			if (!image.load("image")) {
+				throw std::exception("");
+			}
+
+			/* Конвертировать изображение в 24-х битный формат */
+			if (!image.convertTo24Bits()) {
+				image.clear();
+				throw std::exception("");
+			}
+
+			/* Заполнить структуру изображения заново */
+			DWORD w = image.getWidth();
+			DWORD h = image.getHeight();
+			bmi.bmiHeader.biWidth = w;
+			bmi.bmiHeader.biHeight = h;
+			bmi.bmiHeader.biBitCount = image.getBitsPerPixel();
 
 			/* Создаём окно */
 			hWnd = CreateWindow(ImageClassName, L"", imageWindowStyle, x, y, w, h, hParentWnd, nullptr, hInst, nullptr);
@@ -230,25 +221,16 @@ namespace ImageContainer {
 		}
 
 		/* Функция изменения изображения в окне */
-		bool reloadImage(const Image& isoImage) {
-			/* Сначала удалить данные прошлого изображения */
-			image.clear();
-
-			/* Загрузить из памяти обычной в память FreeImage */
-			fipMemoryIO tempImage(isoImage.getRawImage(), isoImage.getRawImageSize());
-
+		bool reloadImage(string imageContainerPath) {
 			/* Загрузить из памяти FreeImage в изображение */
-			if (!image.loadFromMemory(tempImage)) {
-				return false;
+			if (!image.load("image")) {
+				throw std::exception("");
 			}
-
-			/* Очистить память FreeImage */
-			tempImage.close();
 
 			/* Конвертировать изображение в 24-х битный формат */
 			if (!image.convertTo24Bits()) {
 				image.clear();
-				return false;
+				throw std::exception("");
 			}
 
 			/* Заполнить структуру изображения заново */
@@ -257,6 +239,9 @@ namespace ImageContainer {
 			bmi.bmiHeader.biWidth = w;
 			bmi.bmiHeader.biHeight = h;
 			bmi.bmiHeader.biBitCount = image.getBitsPerPixel();
+
+			/* В переменную пользовательских данных окна записываем указатель на класс */
+			SetWindowLongPtr(hWnd, GWLP_USERDATA, (LONG_PTR)this);
 
 			/* Изменить размер окна под стать новому изображению */
 			MoveWindow(hWnd, 0, 0, w, h, false);

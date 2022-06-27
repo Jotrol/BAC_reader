@@ -27,8 +27,6 @@ private:
 	Crypto::Sha1 sha1 = Crypto::getSha1Alg();
 
 public:
-	typedef basic_fstream<UINT8> ByteStream;
-
 	enum DGFILES { EFCOM, DG1, DG2, DG_COUNT };
 
 private:
@@ -85,18 +83,16 @@ public:
 		/* Может быть пределано в создание временных файлов */
 		dgFile[DGFILES::DG1] = ByteStream("DG1.bin", ios::binary | ios::in | ios::out | ios::trunc);
 		dgFile[DGFILES::DG2] = ByteStream("DG2.bin", ios::binary | ios::in | ios::out | ios::trunc);
+		dgFile[DGFILES::EFCOM] = ByteStream("EF_COM.bin", ios::binary | ios::in | ios::out | ios::trunc);
 
 		/* Заполняем идентификаторы файлов */
 		dgID[DGFILES::DG1] = { 0x01, 0x01 };
 		dgID[DGFILES::DG2] = { 0x01, 0x02 };
+		dgID[DGFILES::EFCOM] = { 0x01, 0x1E };
 
 		/* Заполняем стартовые теги файлов */
 		dgTag[DGFILES::DG1] = 0x61;
 		dgTag[DGFILES::DG2] = 0x75;
-
-		/* Заполняем идентификаторы файлов EF */
-		dgFile[DGFILES::EFCOM] = ByteStream("EF_COM.bin", ios::binary | ios::in | ios::out | ios::trunc);
-		dgID[DGFILES::EFCOM] = { 0x01, 0x1E };
 		dgTag[DGFILES::EFCOM] = 0x60;
 
 		/* Флаг говорящий о том, подключен соединен ли паспорт по BAC */
@@ -342,7 +338,67 @@ public:
 
 			/* Увеличиваем смещение файла */
 			fileOff += tempVector1.size();
+
+			std::cout << "\rСчитано: " << (float)fileOff / fileLen * 100.0f << " %";
 		}
+		std::cout << std::endl;
 		return true;
+	}
+
+	ByteVec getPassportRawImage() {
+		dgFile[DGFILES::DG2].seekg(0);
+
+		BerTLV::BerTLVDecoder decoder;
+		UINT16 rootIndex = decoder.decode(dgFile[DGFILES::DG2]);
+		
+		INT16 tag0x75 = decoder.getChildByTag(rootIndex, 0x75);
+		if (tag0x75 == -1) {
+			cerr << "Ошибка: не удалось получить тег 0x75" << endl;
+			return {};
+		}
+
+		INT16 tag0x7F61 = decoder.getChildByTag(tag0x75, 0x7F61);
+		if (tag0x7F61 == -1) {
+			cerr << "Ошибка: не удалось получить тег 0x7F61" << endl;
+			return {};
+		}
+
+		INT16 tag0x7F60 = decoder.getChildByTag(tag0x7F61, 0x7F60);
+		if (tag0x7F60 == -1) {
+			cerr << "Ошибка: не удалось получить тег 0x7F60" << endl;
+			return {};
+		}
+
+		INT16 tagImage = decoder.getChildByTag(tag0x7F60, 0x7F2E);
+		if (tagImage == -1) {
+			tagImage = decoder.getChildByTag(tag0x7F60, 0x5F2E);
+			if (tagImage == -1) {
+				cerr << "Ошибка: не удалось получить изображение по тегам 0x7F2E и 0x5F2E" << endl;
+				return {};
+			}
+		}
+
+		return decoder.getTokenData(dgFile[DGFILES::DG2], tagImage);
+	}
+
+	ByteVec getPassportMRZ() {
+		dgFile[DGFILES::DG1].seekg(0);
+
+		BerTLV::BerTLVDecoder decoder;
+		UINT16 rootIndex = decoder.decode(dgFile[DGFILES::DG1]);
+
+		INT16 tag0x61 = decoder.getChildByTag(rootIndex, 0x61);
+		if (tag0x61 == -1) {
+			cerr << "Ошибка: не удалось обнаружить тег 0x61" << endl;
+			return {};
+		}
+
+		INT16 tag0x5F1F = decoder.getChildByTag(tag0x61, 0x5F1F);
+		if (tag0x5F1F == -1) {
+			cerr << "Ошибка: не удалось обнаружить тег 0x5F1F" << endl;
+			return {};
+		}
+
+		return decoder.getTokenData(dgFile[DGFILES::DG1], tag0x5F1F);
 	}
 };

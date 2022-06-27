@@ -3,6 +3,9 @@
 #include "Crypto.hpp"
 #include "Util.hpp"
 
+#include <sstream>
+#include <string>
+
 namespace APDU {
 	class APDU {
 	protected:
@@ -200,8 +203,8 @@ namespace APDU {
 			return responceData.size();
 		}
 
-		string report() {
-			stringstream ss;
+		std::string report() {
+			std::stringstream ss;
 			ss << "SW1=" << hex << (int)SW1 << ",SW2=" << hex << (int)SW2;
 			return ss.str();
 		}

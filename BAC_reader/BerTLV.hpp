@@ -182,9 +182,6 @@ namespace BerTLV {
 				/* Добавить в массив токенов */
 				tokens[tokenSize++] = token;
 
-				/* Проверить, не закончилось ли место для токенов */
-				checkForExtend();
-
 				/* Если токен составной */
 				if (token.isConstructed()) {
 					/* Начать декодировать токены, определив */
@@ -196,43 +193,18 @@ namespace BerTLV {
 			/* Вернуть ноль в головную функцию - это указывает на начало массива токенов */
 			return 0;
 		}
-
-		/* Функция проверки оставшегося места в массиве токенов */
-		void checkForExtend() {
-			/* Если размер токенов не превышает максимального размера */
-			if (tokenSize < tokenMaxSize) {
-				/* То делать ничего не надо */
-				return;
-			}
-
-			/* Иначе вдвое расширим максимальную вместимость */
-			tokenMaxSize *= 2;
-
-			/* Выделим кусок памяти с новой вместимостью */
-			auto newPiece = make_unique<BerTLVDecoderToken[]>(tokenMaxSize);
-
-			/* Скопируем старый кусок памяти в новый */
-			memcpy(newPiece.get(), tokens.get(), tokenSize * sizeof(BerTLVDecoderToken));
-
-			/* Освободим старую память */
-			tokens.release();
-
-			/* Обменяем указатели - теперь newPiece = nullptr */
-			/* А tokens - хранит в себе новый массив токенов */
-			tokens.swap(newPiece);
-		}
 	public:
 		/* Максимальный размер массива токенов */
-		UINT16 tokenMaxSize = 8;
+		UINT16 tokenMaxSize = 20;
 
 		/* Текущий размер массива токенов */
 		UINT16 tokenSize = 0;
 
 		/* Сам массив токенов */
-		unique_ptr<BerTLVDecoderToken[]> tokens;
+		BerTLVDecoderToken tokens[20] = {};
 
 		/* Конструктор декодера */
-		BerTLVDecoder() : tokens(new BerTLVDecoderToken[tokenMaxSize]) {}
+		BerTLVDecoder() {}
 
 		/* Функция декодирования */
 		UINT16 decode(BerStream& stream) {
@@ -262,18 +234,6 @@ namespace BerTLV {
 
 			/* Иначе, если не найден токен, вернуть ноль */
 			return -1;
-		}
-
-		/* Получение самого токена (его указателя, если вернее) */
-		BerTLVDecoderToken* getTokenPtr(UINT16 tokenIndex) {
-			/* Если каким-то образом индекс больше текущего размера массива */
-			if (tokenIndex > tokenSize) {
-				/* То вернуть нулевой указатель */
-				return nullptr;
-			}
-
-			/* Во всех остальных случаях, вернуть адрес токена по индексу */
-			return &tokens[tokenIndex];
 		}
 
 		vector<UINT8> getTokenRaw(BerStream& file, UINT16 tokenIndex) {
