@@ -68,8 +68,11 @@ void print_vector_hex(const vector<UINT8>& data, string msg) {
 }
 
 #ifdef REAL_TEST
-	string getMRZCode() {
+	string getMRZCode1() {
 		return "5200000001RUS8008046F0902274<<<<<<<<<<<<<<<06";
+	}
+	string getMRZCode2() {
+		return "7400030978RUS8908272F2403052<<<<<<<<<<<<<<08";
 	}
 	vector<UINT8> generateRndIFD() {
 		vector<UINT8> rndIFD(8, 0);
@@ -174,7 +177,7 @@ int main() {
 
 		/* D1, D2. Получение ключей для шифрования, MAC и генерации ключевых пар */
 		/* Из MRZ кода второй строки */
-		auto tuple = getKeysToEncAndMac(getMRZCode());
+		auto tuple = getKeysToEncAndMac(getMRZCode2());
 		auto& kEnc = std::get<0>(tuple);
 		auto& kMac = std::get<1>(tuple);
 		auto& kSeed = std::get<2>(tuple);
@@ -238,52 +241,54 @@ int main() {
 		/* Получение счётчика посылаемых блоков */
 		size_t SSC = getSSC(rICC, rndIFD);
 
-		APDU::APDU selectEFCOM(0x00, 0xA4, 0x02, 0xC, { 0x01, 0x01 });
+		APDU::APDU selectEFCOM(0x00, 0xA4, 0x02, 0xC, { 0x01, 0x02 });
 		APDU::SecureAPDU secureApdu(selectEFCOM);
 
 		vector<UINT8> responceRaw = sendAPDUEFCOM(reader, secureApdu.generateRawSecureAPDU(ksEnc, ksMac, SSC));
-		APDU::SecureRAPDU secureResponce(responceRaw, SSC, ksMac);
+		APDU::SecureRAPDU secureResponce(responceRaw, SSC, ksMac, ksEnc);
 		if (!secureResponce.isResponceOK()) {
 			cerr << "Ошибка 1" << endl;
 			return 1;
 		}
 
-		UINT8 packetLen = 0x04;
-		APDU::APDU readAPDU(0x00, 0xB0, 0x00, 0x00, {}, packetLen);
+		APDU::APDU readAPDU(0x00, 0xB0, 0x00, 0x00, {}, 0x0F);
 		APDU::SecureAPDU secureReadAPDU(readAPDU);
 
 		vector<UINT8> commandReadEfCOM = secureReadAPDU.generateRawSecureAPDU(ksEnc, ksMac, SSC);
 		responceRaw = sendReadEFCOM(reader, commandReadEfCOM);
 
-		APDU::SecureRAPDU readResponce(responceRaw, SSC, ksMac);
+		APDU::SecureRAPDU readResponce(responceRaw, SSC, ksMac, ksEnc);
 		if (!readResponce.isResponceOK()) {
 			cerr << "Ошибка 2" << endl;
 			return 1;
 		}
 
-		datagroupData = {};
 		vector<UINT8> responceData = readResponce.getDecodedResponceData(ksEnc);
 		cout << "Считано " << responceData.size() << " байт" << endl;
 		print_vector_hex(responceData, "Данные");
 		cout << endl;
 
-		datagroupData.insert(datagroupData.end(), responceData.begin(), responceData.end());
+		BerTLV::BerStream DG2("file.bin", ios::binary | ios::in | ios::out | ios::trunc);
+		DG2.write(responceData.data(), responceData.size());
 
-		UINT16 len = responceData[2];
+		auto lenPair = BerTLV::BerDecodeLenBytes(responceData, 0x75);
+		UINT16 len = lenPair.first + lenPair.second;
 		cout << len << endl;
 
-		packetLen = 0xDF;
 		UINT16 offset = responceData.size();
 		while (offset < len) {
-			APDU::APDU readAPDUDG2(0x00, 0xB0, (offset >> 8) & 0xFF, offset & 0xFF, {}, 0xDF);
+			vector<UINT8> bytesOffsetBE = Util::castToVector(offset);
+
+			APDU::APDU readAPDUDG2(0x00, 0xB0, bytesOffsetBE[0], bytesOffsetBE[1], {}, min(0x0F, len - offset));
 			APDU::SecureAPDU secureReadAPDUDG2(readAPDUDG2);
 
 			vector<UINT8> secureAPDU = secureReadAPDUDG2.generateRawSecureAPDU(ksEnc, ksMac, SSC);
 			responceRaw = sendReadEFCOM(reader, secureAPDU);
-			APDU::SecureRAPDU readDG2Responce(responceRaw, SSC, ksMac);
+			APDU::SecureRAPDU readDG2Responce(responceRaw, SSC, ksMac, ksEnc);
 
 			responceData = readDG2Responce.getDecodedResponceData(ksEnc);
-			datagroupData.insert(datagroupData.end(), responceData.begin(), responceData.end());
+			DG2.write(responceData.data(), responceData.size());
+			DG2.flush();
 			if (!readDG2Responce.isResponceOK()) {
 				break;
 			}
@@ -294,66 +299,42 @@ int main() {
 
 			offset += responceData.size();
 		}
-
-		APDU::APDU readAPDUDG2(0x00, 0xB0, (offset >> 8) & 0xFF, offset & 0xFF, {}, len - offset - 2);
-		APDU::SecureAPDU secureReadAPDUDG2(readAPDUDG2);
-
-		vector<UINT8> secureAPDU = secureReadAPDUDG2.generateRawSecureAPDU(ksEnc, ksMac, SSC);
-		responceRaw = sendReadEFCOM(reader, secureAPDU);
-		APDU::SecureRAPDU readDG2Responce(responceRaw, SSC, ksMac);
-
-		responceData = readDG2Responce.getDecodedResponceData(ksEnc);
-		datagroupData.insert(datagroupData.end(), responceData.begin(), responceData.end());
-		if (!readDG2Responce.isResponceOK()) {
-			cerr << "Ошибка 4" << endl;
-			return 1;
-		}
-		cout << "Считано " << responceData.size() << " байт" << endl;
-		print_vector_hex(responceData, "Данные");
-		cout << endl;
 		
-		basic_ofstream<UINT8> file("file.bin", ios::binary);
-		file.write(datagroupData.data(), datagroupData.size());
-		file.close();
-
-		BerTLV::BerStream DG1("file.bin", ios::binary | ios::in);
-		if (!DG1.is_open()) {
-			throw std::exception("Ошибка: файл file.bin не был открыт");
-		}
-		DG1.seekg(0);
-
-		BerTLV::BerTLVDecoder decoder;
-		UINT16 rootIndex = decoder.decode(DG1);
-		UINT16 tag0x61 = decoder.getChildByTag(rootIndex, 0x61);
-		UINT16 tag0x5F1F = decoder.getChildByTag(tag0x61, 0x5F1F);
-
-		vector<UINT8> mrzData = decoder.getTokenData(DG1, tag0x5F1F);
-		for (INT i = 0; i < mrzData.size(); i += 1) {
-			cout << (char)mrzData[i];
-		}
-		cout << endl;
+		DG2.seekg(0);
 
 		//BerTLV::BerTLVDecoder decoder;
 		//UINT16 rootIndex = decoder.decode(DG2);
-		//UINT16 tag0x75 = decoder.getChildByTag(rootIndex, 0x75);
-		//UINT16 tag0x7F60 = decoder.getChildByTag(tag0x75, 0x7F60);
-		//UINT16 tag0x5F2E = decoder.getChildByTag(tag0x7F60, 0x5F2E);
-		//vector<UINT8> tag0x5F2EData = decoder.getTokenData(DG2, tag0x5F2E);
-		//DG2.close();
+		//UINT16 tag0x61 = decoder.getChildByTag(rootIndex, 0x61);
+		//UINT16 tag0x5F1F = decoder.getChildByTag(tag0x61, 0x5F1F);
 
-		//BerTLV::BerStream rawImageData(tmpfile());
-		//rawImageData.write(tag0x5F2EData.data(), tag0x5F2EData.size());
-		//rawImageData.seekg(0);
+		//vector<UINT8> mrzData = decoder.getTokenData(DG2, tag0x5F1F);
+		//for (INT i = 0; i < mrzData.size(); i += 1) {
+		//	cout << (char)mrzData[i];
+		//}
+		//cout << endl;
 
-		//ImageContainer::Image_ISO19794_5_2006 image(rawImageData);
-		//rawImageData.close();
+		BerTLV::BerTLVDecoder decoder;
+		UINT16 rootIndex = decoder.decode(DG2);
+		UINT16 tag0x75 = decoder.getChildByTag(rootIndex, 0x75);
+		UINT16 tag0x7F61 = decoder.getChildByTag(tag0x75, 0x7F61);
+		UINT16 tag0x7F60 = decoder.getChildByTag(tag0x7F61, 0x7F60);
+		UINT16 tag0x5F2E = decoder.getChildByTag(tag0x7F60, 0x5F2E);
+		vector<UINT8> tag0x5F2EData = decoder.getTokenData(DG2, tag0x5F2E);
+		DG2.close();
 
-		//BYTE* imageRaw = image.getRawImage();
-		//UINT32 imageRawSize = image.getRawImageSize();
+		BerTLV::BerStream rawImageData(tmpfile());
+		rawImageData.write(tag0x5F2EData.data(), tag0x5F2EData.size());
+		rawImageData.seekg(0);
 
-		//ImageContainer::ImageStream imageToSave("image.jpg", ios::binary);
-		//imageToSave.write(imageRaw, imageRawSize);
-		//imageToSave.close();
+		ImageContainer::Image_ISO19794_5_2006 image(rawImageData);
+		rawImageData.close();
+
+		BYTE* imageRaw = image.getRawImage();
+		UINT32 imageRawSize = image.getRawImageSize();
+
+		ImageContainer::ImageStream imageToSave("image.jp2", ios::binary | ios::trunc | ios::out);
+		imageToSave.write(imageRaw, imageRawSize);
+		imageToSave.close();
 	}
 	catch (std::exception& e) {
 		cout << e.what() << endl;

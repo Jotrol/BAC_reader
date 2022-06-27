@@ -10,6 +10,26 @@ using namespace std;
 namespace BerTLV {
 	typedef basic_fstream<unsigned char> BerStream;
 
+	/* Декодирует длину указанного тега (который должен быть первым), т.е первый байт должен совпасть */
+	/* Использовать для определения длины файла */
+	pair<UINT16, UINT8> BerDecodeLenBytes(const vector<UINT8>& data, UINT8 berTag) {
+		if (data[0] != berTag) {
+			throw std::exception("Ошибка: тег для декодирования не совпал");
+		}
+
+		UINT8 startByte = data[1];
+		if (((startByte >> 7) & 1) == 0) {
+			return make_pair(startByte, 1);
+		}
+
+		UINT8 bytesCount = (startByte & 0x7F);
+		UINT16 len = 0;
+		for (UINT8 i = 0; i < bytesCount; i += 1) {
+			len = (len << 8) | (data[i + 2] & 0xFF);
+		}
+		return make_pair(len, bytesCount + 2); /* +2 байта потому, что один байт тега и 1 байт длины */
+	}
+
 	/* Классы тега */
 	enum class BerTagClass { UNIVERSAL, APPLICATION, CONTEXT_SPECIFIC, PRIVATE };
 

@@ -201,11 +201,12 @@ namespace APDU {
 	};
 	class SecureRAPDU : public RAPDU {
 		bool isValid;
-		vector<UINT8> responceDO87RawData;
+		vector<UINT8> responceDO87DecodedData;
 	public:
-		SecureRAPDU(const vector<UINT8>& responce, UINT64& SSC, const vector<BYTE>& ksMAC) : RAPDU(responce) {
+		SecureRAPDU(const vector<UINT8>& responce, UINT64& SSC, const vector<BYTE>& ksMAC, const vector<BYTE>& ksEnc) : RAPDU(responce) {
 			/* Получив ответ в виде защищённого RAPDU, его стоит дампнуть во временный файл */
-			BerTLV::BerStream berStream(tmpfile());
+			//BerTLV::BerStream berStream("rawAPDU.bin", ios::in | ios::out | ios::binary | ios::trunc);
+			BerTLV::BerStream berStream("apduRaw.bin", ios::in | ios::out | ios::binary | ios::trunc);
 
 			/* Записываем полученные данные в файл, а затем возвращаем каретку для считывания в начало файлаы */
 			berStream.write(this->responceData.data(), this->responceData.size());
@@ -251,8 +252,34 @@ namespace APDU {
 			}
 
 			if (do87Index != -1) {
-				responceDO87RawData = bertlvDecoder.getTokenData(berStream, do87Index);
+				responceData = bertlvDecoder.getTokenData(berStream, do87Index);
+
+				/* Получаем алгоритм шифрования */
+				Crypto::Des3& des3 = Crypto::getDes3Alg();
+
+				/* Избавляемся от 0x01 в DO'87 */
+				responceDO87DecodedData.insert(responceDO87DecodedData.end(), responceData.begin() + 1, responceData.end());
+
+				responceDO87DecodedData = des3.decrypt(responceDO87DecodedData, ksEnc);
+
+				/* Убираем заполнение */
+				INT find0x80 = -1;
+				for (INT i = responceDO87DecodedData.size() - 1; i > -1; i -= 1) {
+					if (responceDO87DecodedData[i] == 0x80) {
+						find0x80 = i;
+						break;
+					}
+				}
+
+				if (find0x80 == -1) {
+					responceDO87DecodedData = {};
+				}
+				else {
+					responceDO87DecodedData.resize(find0x80);
+				}
 			}
+
+			berStream.close();
 		}
 
 		virtual bool isResponceOK() const {
@@ -260,21 +287,7 @@ namespace APDU {
 		}
 
 		vector<UINT8> getDecodedResponceData(const vector<BYTE>& ksEnc) const {
-			if (responceDO87RawData.size() == 0) { return {}; }
-
-			/* Получаем алгоритм DES3 и убираем единицу с начала данных */
-			Crypto::Des3& des3 = Crypto::getDes3Alg();
-			vector<UINT8> deshrinked(responceDO87RawData.begin() + 1, responceDO87RawData.end());
-
-			/* Дешифрация данных */
-			vector<UINT8> decipher = des3.decrypt(deshrinked, ksEnc);
-
-			/* Убираем заполнение */
-			INT find0x80 = decipher.size() - 1;
-			for (; decipher[find0x80] != 0x80 && find0x80 > -1; find0x80 -= 1);
-
-			decipher.resize(find0x80);
-			return decipher;
+			return responceDO87DecodedData;
 		}
 	};
 }
