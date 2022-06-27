@@ -12,14 +12,15 @@ namespace BerTLV {
 
 	/* Декодирует длину указанного тега (который должен быть первым), т.е первый байт должен совпасть */
 	/* Использовать для определения длины файла */
-	pair<UINT16, UINT8> BerDecodeLenBytes(const vector<UINT8>& data, UINT8 berTag) {
+	UINT16 BerDecodeLenBytes(const vector<UINT8>& data, UINT8 berTag) {
 		if (data[0] != berTag) {
-			throw std::exception("Ошибка: тег для декодирования не совпал");
+			return -1;
 		}
-
+		
 		UINT8 startByte = data[1];
 		if (((startByte >> 7) & 1) == 0) {
-			return make_pair(startByte, 2);
+			/* +2 байта потому, что один байт тега и 1 байт длины */
+			return startByte + 2;
 		}
 
 		UINT8 bytesCount = (startByte & 0x7F);
@@ -27,7 +28,9 @@ namespace BerTLV {
 		for (UINT8 i = 0; i < bytesCount; i += 1) {
 			len = (len << 8) | (data[i + 2] & 0xFF);
 		}
-		return make_pair(len, bytesCount + 2); /* +2 байта потому, что один байт тега и 1 байт длины */
+
+		/* +2 байта потому, что один байт тега и 1 байт длины */
+		return len + bytesCount + 2;
 	}
 
 	/* Классы тега */

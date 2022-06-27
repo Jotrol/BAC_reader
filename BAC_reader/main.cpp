@@ -12,45 +12,340 @@
 #include <cassert>
 using namespace std;
 
-#define REAL_TEST
 
-pair< vector<UINT8>, vector<UINT8>> generateKeyPair(const vector<UINT8>& kSeed) {
-	Crypto::Sha1& sha1 = Crypto::getSha1Alg();
+class Passport {
+private:
+	/* Константы и "полу-константы" */
+	const APDU::APDU SelectApp = APDU::APDU(0x00, 0xA4, 0x04, 0x0C, { 0x07, 0xA0, 0x00, 0x00, 0x02, 0x47, 0x10, 0x01 });
+	const APDU::APDU GetICC = APDU::APDU(0x00, 0x84, 0x00, 0x00, {}, 0x08);
+	const APDU::APDU ExtAuth = APDU::APDU(0x00, 0x82, 0x00, 0x00, {}, 0x28);
+	const APDU::APDU SelectFile = APDU::APDU(0x00, 0xA4, 0x02, 0x0C);
+	const APDU::APDU ReadBinary = APDU::APDU(0x00, 0xB0, 0x00, 0x00);
 
-	vector<UINT8> encAppend = { 0x00, 0x00, 0x00, 0x01 };
-	vector<UINT8> macAppend = { 0x00, 0x00, 0x00, 0x02 };
-	vector<UINT8> dEnc(kSeed.begin(), kSeed.end()); dEnc.insert(dEnc.end(), encAppend.begin(), encAppend.end());
-	vector<UINT8> dMac(kSeed.begin(), kSeed.end()); dMac.insert(dMac.end(), macAppend.begin(), macAppend.end());
-
-	auto kEnc = sha1.getHash(dEnc);
-	kEnc.resize(16);
-	kEnc = Crypto::correctParityBits(kEnc);
-
-	auto kMac = sha1.getHash(dMac);
-	kMac.resize(16);
-	kMac = Crypto::correctParityBits(kMac);
-
-	return { kEnc, kMac };
-}
-tuple<vector<UINT8>, vector<UINT8>, vector<UINT8>> getKeysToEncAndMac(string mrzLine2) {
+	Crypto::Des3& des3 = Crypto::getDes3Alg();
 	Crypto::RetailMAC& mac = Crypto::getMacAlg();
-	Crypto::Sha1& sha1 = Crypto::getSha1Alg();
+	Crypto::Sha1 sha1 = Crypto::getSha1Alg();
 
-	DecoderMRZLine2 mrzDecoder(mrzLine2);
-	auto mrzData = mrzDecoder.ComposeData();
-	auto kSeed = sha1.getHash(mrzData);
-	kSeed.resize(16);
+public:
+	typedef basic_fstream<UINT8> ByteStream;
+	typedef vector<UINT8> ByteVec;
 
-	auto keys = generateKeyPair(kSeed);
-	auto& kEnc = keys.first;
-	auto& kMac = keys.second;
+	enum DGFILES { DG1, DG2, DG_COUNT };
 
-	return make_tuple(kEnc, kMac, kSeed);
-}
+private:
+	bool isConnectedViaBAC;
+	SCARDHANDLE hCard;
+	UINT64 SSC;
+	
+	ByteVec kEnc;
+	ByteVec kMac;
 
-vector<UINT8> SelectApp = { 0x00, 0xA4, 0x04, 0x0C, 0x07, 0xA0, 0x00, 0x00, 0x02, 0x47, 0x10, 0x01 };
-vector<UINT8> GetICC = { 0x00, 0x84, 0x00, 0x00, 0x08 };
-vector<UINT8> MUTUAL_AUTH = { 0x00, 0x82, 0x00, 0x00, 0x28 };
+	ByteStream dgFile[DGFILES::DG_COUNT];
+	ByteVec dgID[DGFILES::DG_COUNT];
+	UINT8 dgTag[DGFILES::DG_COUNT];
+
+	pair<ByteVec, ByteVec> generateKeys(const ByteVec& kSeed) {
+		ByteVec dEnc = kSeed;
+		dEnc.insert(dEnc.end(), { 0x00, 0x00, 0x00, 0x01 });
+
+		ByteVec dMac = kSeed;
+		dMac.insert(dMac.end(), { 0x00, 0x00, 0x00, 0x02 });
+
+		dEnc = sha1.getHash(dEnc);
+		dEnc.resize(16);
+
+		dMac = sha1.getHash(dMac);
+		dMac.resize(16);
+
+		return make_pair(dEnc, dMac);
+	}
+	ByteVec generateBytes(UINT32 size) {
+		ByteVec output(size, 0);
+		for (UINT i = 0; i < size; i += 1) {
+			output[i] = rand() % 255;
+		}
+		return output;
+	}
+	ByteVec encryptS(const ByteVec& rndIFD, const ByteVec& rndICC, const ByteVec& kIFD) {
+		/* Конкатенируем всё для S */
+		ByteVec S = {};
+		S.insert(S.end(), rndIFD.begin(), rndIFD.end());
+		S.insert(S.end(), rndICC.begin(), rndICC.end());
+		S.insert(S.end(), kIFD.begin(), kIFD.end());
+
+		/* Шифруем в итоге rndIFD | rndICC | kIFD */
+		S = des3.encrypt(S, kEnc);
+
+		/* Размер может получится больше, а нам нужны только 32 байта */
+		//S.resize(32);
+		return S;
+	}
+public:
+	Passport() {
+		/* Создаём временные файлы для каждой группы данных */
+		/* Может быть пределано в создание временных файлов */
+		dgFile[DGFILES::DG1] = ByteStream("DG1.bin", ios::binary | ios::in | ios::out | ios::trunc);
+		dgFile[DGFILES::DG2] = ByteStream("DG2.bin", ios::binary | ios::in | ios::out | ios::trunc);
+
+		/* Заполняем идентификаторы файлов */
+		dgID[DGFILES::DG1] = { 0x01, 0x01 };
+		dgID[DGFILES::DG2] = { 0x01, 0x02 };
+
+		/* Заполняем стартовые теги файлов */
+		dgTag[DGFILES::DG1] = 0x61;
+		dgTag[DGFILES::DG2] = 0x75;
+
+		/* Флаг говорящий о том, подключен соединен ли паспорт по BAC */
+		isConnectedViaBAC = false;
+
+		/* Дескриптор карты по умолчанию */
+		hCard = 0;
+	}
+
+	/* Функция соединения паспорта с кардридером, не BAC! */
+	bool connectPassport(const CardReader& reader, const wstring& readerName) {
+		hCard = reader.cardConnect(readerName);
+		if (hCard == 0) {
+			cerr << "Ошибка: не удалось соединиться с картой" << endl;
+			return false;
+		}
+		return true;
+	}
+
+	/* Функция отключения паспорта от ридера */
+	bool disconnectPassport(const CardReader& reader) {
+		/* Ставим флажок, чтобы нельзя было считать данные */
+		isConnectedViaBAC = false;
+
+		/* Закрыываем все файлы групп данных */
+		for (UINT i = 0; i < DGFILES::DG_COUNT; i += 1) {
+			dgFile[i].close();
+		}
+
+		/* Отключаем паспорт */
+		return reader.cardDisconnect(hCard);
+	}
+
+	/* Функция выполнения соединения по протоколу Basic Access Control */
+	bool perfomBAC(const CardReader& reader, string mrzLine2) {
+		/* Временные переменные для хранения данных */
+		/* Необходимых для подключения по BAC */
+		APDU::APDU tempAPDU;
+		APDU::RAPDU tempRAPDU;
+
+		vector<UINT8> tempVector1 = {};
+		vector<UINT8> tempVector2 = {};
+
+		/* Необходимо для получения SSC */
+		vector<UINT8> rICC = {};
+		vector<UINT8> rIFD = {};
+
+		/* Генерируем инициализирующий хэш из данных MRZ */
+		DecoderMRZLine2 decoderMRZLine2(mrzLine2);
+		tempVector1 = sha1.getHash(decoderMRZLine2.ComposeData());
+		tempVector1.resize(16);
+
+		/* Генерируем ключи для обмена */
+		auto keyPair = generateKeys(tempVector1);
+		kEnc = keyPair.first;
+		kMac = keyPair.second;
+
+		/* Выбираем приложение */
+		tempVector1 = reader.sendCommand(hCard, SelectApp.getCommand());
+		tempRAPDU = APDU::RAPDU(tempVector1);
+		if (!tempRAPDU.isResponceOK()) {
+			cerr << "Ошибка: произошла ошибка в SelectApp: " << tempRAPDU.report() << endl;
+			return false;
+		}
+
+		/* Получаем случайное число */
+		tempVector1 = reader.sendCommand(hCard, GetICC.getCommand());
+		tempRAPDU = APDU::RAPDU(tempVector1);
+		if (!tempRAPDU.isResponceOK()) {
+			cerr << "Ошибка: не удалось получить RICC: " << tempRAPDU.report() << endl;
+			return false;
+		}
+
+		/* Получив случайное число от МСПД, сами генерируем случайные числа */
+		/* И, добавив случайное число от МСПД, шифруем результат */
+		/* В tempRAPDU.data содержится случайное число от МСПД */
+		rIFD = generateBytes(8);			/* Это rndIFD */
+		tempVector1 = generateBytes(16);	/* Это kIFD */
+		rICC = tempRAPDU.getResponceData(); /* Это rICC */
+		
+		tempVector1 = encryptS(rIFD, rICC, tempVector1);
+
+		/* Генрируем MAC от зашифрованного */
+		tempVector2 = mac.getMAC(tempVector1, kMac);
+
+		/* Добавим к E_IFD 8 байт MAC[kMac](E_IFD) - получится 40 байт */
+		tempVector1.insert(tempVector1.end(), tempVector2.begin(), tempVector2.end());
+
+		/* Посылаем cmdData в виде APDU команды EXTERNAL_AUTHENTICATE */
+		/* Копируем APDU команду чтобы её поменять */
+		tempAPDU = ExtAuth;
+
+		/* Заполняем данные этой команды */
+		tempAPDU.appendCommandData({ 0x28 });
+		tempAPDU.appendCommandData(tempVector1);
+
+		/* Отправляем команду на карту и получаем ответ*/
+		tempVector1 = reader.sendCommand(hCard, tempAPDU.getCommand());
+		tempRAPDU = APDU::RAPDU(tempVector1);
+		if (!tempRAPDU.isResponceOK()) {
+			cerr << "Ошибка: не удалось отправить CmdData: " << tempRAPDU.report() << endl;
+			return false;
+		}
+
+		/* Проверка ответа на команду EXTERNAL_AUTHENTICATE */
+		/* Получаем данные ответа */
+		tempVector1 = tempRAPDU.getResponceData();
+
+		/* Выделяем из ответа нижние и верхние 32 байта */
+		tempVector2 = vector<UINT8>(tempVector1.begin() + 32, tempVector1.end());
+		tempVector1.resize(32);
+
+		/* Считаем MAC от верхних 32 байт */
+		tempVector1 = mac.getMAC(tempVector1, kMac);
+		if (tempVector1 != tempVector2) {
+			cerr << "Ошибка: не совпал MAC в respData: " << endl;
+			return false;
+		}
+
+		/* Получаем данные ответа заново */
+		tempVector1 = tempRAPDU.getResponceData();
+
+		/* Нужны только верхние 32 байта */
+		tempVector1.resize(32);
+
+		/* Дешифруем эти 32 байта */
+		tempVector1 = des3.decrypt(tempVector1, kEnc);
+
+		/* Проверяем, что получили то же rndIFD */
+		tempVector2 = ByteVec(tempVector1.begin() + 8, tempVector1.begin() + 16);
+		if (tempVector2 != rIFD) {
+			cerr << "Ошибка: rndIFD не одинаков" << endl;
+			return false;
+		}
+
+		/* Выделяем новый kSeed  */
+		tempVector2 = ByteVec(tempVector1.begin() + 16, tempVector1.end());
+		for (UINT i = 0; i < tempVector2.size(); i += 1) {
+			tempVector2[i] = tempVector2[i] ^ tempVector2[i];
+		}
+
+		/* Генерируем новые ключи по полученному kSeed */
+		keyPair = generateKeys(tempVector2);
+		kEnc = keyPair.first;
+		kMac = keyPair.second;
+
+		/* Получаем начальное значение счётчика */
+		SSC = ((UINT64)rICC[4] << 56) | ((UINT64)rICC[5] << 48) | ((UINT64)rICC[6] << 40) | ((UINT64)rICC[7] << 32) | ((UINT64)rIFD[4] << 24) | ((UINT64)rIFD[5] << 16) | ((UINT64)rIFD[6] << 8) | rIFD[7];
+
+		/* Ура, BAC состоялся */
+		isConnectedViaBAC = true;
+		return true;
+	}
+
+	bool readDG(const CardReader& reader, DGFILES file) {
+		/* Если не было установлено соединение - то нельзя и считать данные */
+		if (!isConnectedViaBAC) {
+			cerr << "Ошибка: нет соединения по BAC" << endl;
+			return false;
+		}
+
+		APDU::APDU apdu;
+		APDU::RAPDU rapdu;
+
+		APDU::SecureAPDU secAPDU;
+		APDU::SecureRAPDU secRAPDU;
+
+		ByteVec tempVector1 = {};
+
+		UINT16 fileLen = 0x00;
+		UINT16 fileOff = 0x00;
+
+		/* Выбираем файл */
+		apdu = SelectFile;
+		apdu.appendCommandData(dgID[file]);
+
+		/* Конструируем защищённую команду и отправляем */
+		secAPDU = APDU::SecureAPDU(apdu);
+		tempVector1 = reader.sendCommand(hCard, secAPDU.generateRawSecureAPDU(kEnc, kMac, SSC));
+
+		/* Получаем ответ и проверям его */
+		secRAPDU = APDU::SecureRAPDU(tempVector1, kEnc, kMac, SSC);
+		if (!secRAPDU.isResponceOK()) {
+			cerr << "Ошибка: не удалось отправить команду Select: " << secRAPDU.report() << endl;
+			return false;
+		}
+
+		/* Считываем первые 15 байт (ну или сколько сможет дать) чтобы узнать размер файла */
+		apdu = ReadBinary;
+		secAPDU = APDU::SecureAPDU(apdu);
+		tempVector1 = reader.sendCommand(hCard, secAPDU.generateRawSecureAPDU(kEnc, kMac, SSC));
+		secRAPDU = APDU::SecureRAPDU(tempVector1, kEnc, kMac, SSC);
+		if (!secRAPDU.isResponceOK()) {
+			cerr << "Ошибка: не удалось считать длину файла: " << secRAPDU.report() << endl;
+			return false;
+		}
+
+		/* Записываем полученные байты в файл группы данных */
+		tempVector1 = secRAPDU.getDecodedResponceData();
+		dgFile[file].write(tempVector1.data(), tempVector1.size());
+		dgFile[file].flush();
+
+		/* 2 байта размера - это минимум для DG1, например */
+		if (tempVector1.size() < 0x02) {
+			cerr << "Ошибка: не удалось узнать длину файла" << endl;
+			return false;
+		}
+
+		/* Получаем длину файла с проверкой первого тега */
+		fileLen = BerTLV::BerDecodeLenBytes(tempVector1, dgTag[file]);
+		if (fileLen == -1) {
+			cerr << "Ошибка: неверная длина файла" << endl;
+			return false;
+		}
+
+		/* Начинаем считывание всего файла */
+		fileOff = tempVector1.size();
+		while (fileOff < fileLen) {
+			/* Переводим из LE в BE; на BE машине ничего не изменится */
+			UINT16 offBE = Util::changeEndiannes(fileOff);
+
+			/* Создаём команду для отправки */
+			apdu = ReadBinary;
+			apdu.setCommandField(APDU::APDU::Fields::P1, (offBE >> 8) & 0xFF);
+			apdu.setCommandField(APDU::APDU::Fields::P2, offBE & 0xFF);
+			apdu.setLe(0x0F);
+
+			/* Формируем защищённую команду и отправляем её */
+			secAPDU = APDU::SecureAPDU(apdu);
+			tempVector1 = reader.sendCommand(hCard, secAPDU.generateRawSecureAPDU(kEnc, kMac, SSC));
+			
+			/* Получаем ответ и производим его проверку */
+			secRAPDU = APDU::SecureRAPDU(tempVector1, kEnc, kMac, SSC);
+			if (!secRAPDU.isResponceOK()) {
+				cerr << "Ошибка: не удалось считать файл: " << secRAPDU.report() << endl;
+				return false;
+			}
+
+			/* Записываем расшифрованный ответ в файл */
+			tempVector1 = secRAPDU.getDecodedResponceData();
+			dgFile[file].write(tempVector1.data(), tempVector1.size());
+			dgFile[file].flush();
+
+			/* Увеличиваем смещение файла */
+			fileOff += tempVector1.size();
+
+			cout << "\rСчитано: " << (float)fileLen / (float)fileOff << " %\n";
+		}
+
+		dgFile[file].close();
+		return true;
+	}
+};
 
 #include <random>
 #include <ctime>
@@ -67,277 +362,35 @@ void print_vector_hex(const vector<UINT8>& data, string msg) {
 	cout << endl;
 }
 
-#ifdef REAL_TEST
-	string getMRZCode1() {
-		return "5200000001RUS8008046F0902274<<<<<<<<<<<<<<<06";
-	}
-	string getMRZCode2() {
-		return "7400030978RUS8908272F2403052<<<<<<<<<<<<<<08";
-	}
-	vector<UINT8> generateRndIFD() {
-		vector<UINT8> rndIFD(8, 0);
-		for (int i = 0; i < 8; i += 1) {
-			rndIFD[i] = rand() & 0xFF;
-		}
-		return rndIFD;
-	}
-	vector<UINT8> generateKIFD() {
-		vector<UINT8> kIFD(16, 0);
-		for (int i = 0; i < 16; i += 1) {
-			kIFD[i] = rand() & 0xFF;
-		}
-		return kIFD;
-	}
-	vector<UINT8> getICC(const CardReader& reader) {
-		/* Выбираем приложение карты */
-		APDU::RAPDU responce(reader.SendCommand(SelectApp));
-		if (!responce.isResponceOK()) {
-			throw std::exception("Ошибка: не удалось отправить SelectApp");
-		}
-
-		/* Отправляем команду для начала обмена ключами */
-		responce = APDU::RAPDU(reader.SendCommand(GetICC));
-		if (!responce.isResponceOK()) {
-			throw std::exception("Ошибка: не удалось отправить GetICC");
-		}
-		return responce.getResponceData();
-	}
-	vector<UINT8> getMutualAuth(const CardReader& reader, const vector<UINT8>& cmdData) {
-		vector<UINT8> mutualAuthCommand(MUTUAL_AUTH);
-		mutualAuthCommand.insert(mutualAuthCommand.end(), cmdData.begin(), cmdData.end());
-		mutualAuthCommand.push_back(0x28);
-
-		APDU::RAPDU responce = reader.SendCommand(mutualAuthCommand);
-		if (!responce.isResponceOK()) {
-			throw std::exception("Ошибка: не удалось отправить MutualAuth");
-		}
-
-		return responce.getResponceData();
-	}
-	UINT64 getSSC(const vector<UINT8>& rICC, const vector<UINT8>& rndIFD) {
-		return ((UINT64)rICC[4] << 56) | ((UINT64)rICC[5] << 48) | ((UINT64)rICC[6] << 40) | ((UINT64)rICC[7] << 32) | ((UINT64)rndIFD[4] << 24) | ((UINT64)rndIFD[5] << 16) | ((UINT64)rndIFD[6] << 8) | rndIFD[7];
-	}
-	vector<UINT8> sendAPDUEFCOM(const CardReader& reader, const vector<UINT8>& apdu) {
-		return reader.SendCommand(apdu);
-	}
-	vector<UINT8> sendReadEFCOM(const CardReader& reader, const vector<UINT8>& apdu) {
-		return reader.SendCommand(apdu);
-	}
-#else
-	vector<UINT8> expectedCmdData = { 0x72, 0xC2, 0x9C, 0x23, 0x71, 0xCC, 0x9B, 0xDB, 0x65, 0xB7, 0x79, 0xB8, 0xE8, 0xD3, 0x7B, 0x29, 0xEC, 0xC1, 0x54, 0xAA, 0x56, 0xA8, 0x79, 0x9F, 0xAE, 0x2F, 0x49, 0x8F, 0x76, 0xED, 0x92, 0xF2, 0x5F, 0x14, 0x48, 0xEE, 0xA8, 0xAD, 0x90, 0xA7 };
-
-	/* Если верить стандарту (а надо), то в конце может быть записано двухбайтное Le, либо 0x00 (если Le = 0) или 0x00 0x00 (потому что два байта). Два нулевых байта можно */
-	vector<UINT8> expectedAPDUEFCOM = { 0x0C, 0xA4, 0x02, 0x0C, 0x15, 0x87, 0x09, 0x01, 0x63, 0x75, 0x43, 0x29, 0x08, 0xC0, 0x44, 0xF6, 0x8E, 0x08, 0xBF, 0x8B, 0x92, 0xD6, 0x35, 0xFF, 0x24, 0xF8, 0x00 };
-
-	vector<UINT8> expectedReadEFCOM = { 0x0C, 0xB0, 0x00, 0x00, 0x0D, 0x97, 0x01, 0x04, 0x8E, 0x08, 0xED, 0x67, 0x05, 0x41, 0x7E, 0x96, 0xBA, 0x55, 0x00 };
-
-	string getMRZCode() { return "L898902C<3UTO6908061F9406236ZE184226B<<<<<14"; }
-	vector<UINT8> generateRndIFD() { return { 0x78, 0x17, 0x23, 0x86, 0x0C, 0x06, 0xC2, 0x26 }; }
-	vector<UINT8> generateKIFD() { return { 0x0B, 0x79, 0x52, 0x40, 0xCB, 0x70, 0x49, 0xB0, 0x1C, 0x19, 0xB3, 0x3E, 0x32, 0x80, 0x4F, 0x0B }; }
-	vector<UINT8> getICC(const CardReader& reader) { return { 0x46, 0x08, 0xF9, 0x19, 0x88, 0x70, 0x22, 0x12 }; }
-	vector<UINT8> getMutualAuth(const CardReader& reader, const vector<UINT8>& cmdData) {
-		assert(cmdData == expectedCmdData);
-		return { 0x46, 0xB9, 0x34, 0x2A, 0x41, 0x39, 0x6C, 0xD7, 0x38, 0x6B, 0xF5, 0x80, 0x31, 0x04, 0xD7, 0xCE, 0xDC, 0x12, 0x2B, 0x91, 0x32, 0x13, 0x9B, 0xAF, 0x2E, 0xED, 0xC9, 0x4E, 0xE1, 0x78, 0x53, 0x4F, 0x2F, 0x2D, 0x23, 0x5D, 0x07, 0x4D, 0x74, 0x49 };
-	}
-	UINT64 getSSC(const vector<UINT8>& rICC, const vector<UINT8>& rndIFD) { 
-		UINT64 SSC = ((UINT64)rICC[4] << 56) | ((UINT64)rICC[5] << 48) | ((UINT64)rICC[6] << 40) | ((UINT64)rICC[7] << 32) | ((UINT64)rndIFD[4] << 24) | ((UINT64)rndIFD[5] << 16) | ((UINT64)rndIFD[6] << 8) | rndIFD[7];
-		assert(SSC == 0x887022120C06C226ULL);
-		return SSC;
-	}
-	vector<UINT8> sendAPDUEFCOM(const CardReader& reader, const vector<UINT8>& apdu) {
-		assert(apdu == expectedAPDUEFCOM);
-		return { 0x99, 0x02, 0x90, 0x00, 0x8E, 0x08, 0xFA, 0x85, 0x5A, 0x5D, 0x4C, 0x50, 0xA8, 0xED, 0x90, 0x00 };
-	}
-	vector<UINT8> sendReadEFCOM(const CardReader& reader, const vector<UINT8>& apdu) {
-		print_vector_hex(apdu, "APDU        ");
-		print_vector_hex(expectedReadEFCOM, "expectedAPDU");
-		assert(apdu == expectedReadEFCOM);
-		return { 0x87, 0x09, 0x01, 0x9F, 0xF0, 0xEC, 0x34, 0xF9, 0x92, 0x26, 0x51, 0x99, 0x02, 0x90, 0x00, 0x8E, 0x08, 0xAD, 0x55, 0xCC, 0x17, 0x14, 0x0B, 0x2D, 0xED, 0x90, 0x00 };
-	}
-#endif
-
-
+string getMRZCode1() {
+	return "5200000001RUS8008046F0902274<<<<<<<<<<<<<<<06";
+}
 
 int main() {
 	srand((UINT)time(NULL));
 	setlocale(LC_ALL, "rus");
 
-	/* Инициализация шифрования и кпритографической подписи, кардридера */
-	Crypto::Des3& des3 = Crypto::getDes3Alg();
-	Crypto::RetailMAC& mac = Crypto::getMacAlg();
+	CardReader reader;
+	auto readersList = reader.getReadersList();
+	auto& readerName = readersList[0];
 
-	vector<UINT8> datagroupData = {};
+	cin.get();
+	Passport passport;
 
-	try {
-		CardReader reader;
-		auto readersList = reader.GetReadersList();
-
-		cin.get();
-		reader.CardConnect(readersList[0]);
-
-		/* D1, D2. Получение ключей для шифрования, MAC и генерации ключевых пар */
-		/* Из MRZ кода второй строки */
-		auto tuple = getKeysToEncAndMac(getMRZCode2());
-		auto& kEnc = std::get<0>(tuple);
-		auto& kMac = std::get<1>(tuple);
-		auto& kSeed = std::get<2>(tuple);
-
-		/* D3.1. Получение случайного числа от карты */
-		vector<UINT8> rICC = getICC(reader);
-		if (rICC.size() == 0) { return 1; }
-
-		/* D3.2. Генерация случайных чисел для обмена ключами */
-		vector<UINT8> rndIFD = generateRndIFD();
-		vector<UINT8> kIFD = generateKIFD();
-
-		/* D3.3. Конкатенация rndIFD, rICC и kIFD */
-		vector<UINT8> S(rndIFD);
-		S.insert(S.end(), rICC.begin(), rICC.end());
-		S.insert(S.end(), kIFD.begin(), kIFD.end());
-
-		/* D3.4. Шифрование S ключом kEnc; отсекаются лишние байты, так как нужны только 32 байта */
-		auto E_IFD = des3.encrypt(S, kEnc);
-		E_IFD.resize(32);
-
-		/* D3.5. Вычисление MAC по E_IFD ключом 3DES kMac */
-		auto M_IFD = mac.getMAC(E_IFD, kMac);
-
-		/* D3.6. Формирование APDU команды EXTERNAL AUTHENTICATE и посылка команды МСПД */
-		vector<UINT8> cmdData;
-		cmdData.insert(cmdData.end(), E_IFD.begin(), E_IFD.end());
-		cmdData.insert(cmdData.end(), M_IFD.begin(), M_IFD.end());
-
-		vector<UINT8> resp_data = getMutualAuth(reader, cmdData);
-		if (resp_data.size() == 0) { return 1; }
-
-		/* D3.6.Система проверки */
-		vector<UINT8> E_ICC_RAW;
-		E_ICC_RAW.insert(E_ICC_RAW.begin(), resp_data.begin(), resp_data.begin() + 32);
-		vector<UINT8> M_ICC_RAW;
-		M_ICC_RAW.insert(M_ICC_RAW.begin(), resp_data.begin() + 32, resp_data.end());
-
-		auto M_ICC_CALC = mac.getMAC(E_ICC_RAW, kMac);
-		if (M_ICC_CALC != M_ICC_RAW) {
-			throw std::exception("Ошибка: MAC не совпал с ответом");
-		}
-
-		auto E_ICC = des3.decrypt(E_ICC_RAW, kEnc);
-		vector<UINT8> RND_IFD;
-		RND_IFD.insert(RND_IFD.begin(), E_ICC.begin() + 8, E_ICC.begin() + 16);
-		if (RND_IFD != rndIFD) {
-			throw std::exception("Ошибка: RND.IFD не совпал");
-		}
-
-		vector<UINT8> kICC;
-		kICC.insert(kICC.begin(), E_ICC.begin() + 16, E_ICC.end());
-		for (int i = 0; i < kICC.size(); i += 1) {
-			kICC[i] = kICC[i] ^ kIFD[i];
-		}
-
-		auto keys = generateKeyPair(kICC);
-		auto& ksEnc = keys.first;
-		auto& ksMac = keys.second;
-
-		/* Получение счётчика посылаемых блоков */
-		size_t SSC = getSSC(rICC, rndIFD);
-
-		APDU::APDU selectEFCOM(0x00, 0xA4, 0x02, 0xC, { 0x01, 0x01 });
-		APDU::SecureAPDU secureApdu(selectEFCOM);
-
-		vector<UINT8> responceRaw = sendAPDUEFCOM(reader, secureApdu.generateRawSecureAPDU(ksEnc, ksMac, SSC));
-		APDU::SecureRAPDU secureResponce(responceRaw, SSC, ksMac, ksEnc);
-		if (!secureResponce.isResponceOK()) {
-			cerr << "Ошибка 1" << endl;
-			return 1;
-		}
-
-		APDU::APDU readAPDU(0x00, 0xB0, 0x00, 0x00, {}, 0x0F);
-		APDU::SecureAPDU secureReadAPDU(readAPDU);
-
-		vector<UINT8> commandReadEfCOM = secureReadAPDU.generateRawSecureAPDU(ksEnc, ksMac, SSC);
-		responceRaw = sendReadEFCOM(reader, commandReadEfCOM);
-
-		APDU::SecureRAPDU readResponce(responceRaw, SSC, ksMac, ksEnc);
-		if (!readResponce.isResponceOK()) {
-			cerr << "Ошибка 2" << endl;
-			return 1;
-		}
-
-		vector<UINT8> responceData = readResponce.getDecodedResponceData(ksEnc);
-		cout << "Считано " << responceData.size() << " байт" << endl;
-		print_vector_hex(responceData, "Данные");
-		cout << endl;
-
-		BerTLV::BerStream DG2("file.bin", ios::binary | ios::in | ios::out | ios::trunc);
-		DG2.write(responceData.data(), responceData.size());
-
-		auto lenPair = BerTLV::BerDecodeLenBytes(responceData, 0x61);
-		UINT16 len = lenPair.first + lenPair.second;
-		cout << len << endl;
-
-		UINT16 offset = responceData.size();
-		while (offset < len) {
-			vector<UINT8> bytesOffsetBE = Util::castToVector(offset);
-
-			APDU::APDU readAPDUDG2(0x00, 0xB0, bytesOffsetBE[0], bytesOffsetBE[1], {}, min(0x0F, len - offset));
-			APDU::SecureAPDU secureReadAPDUDG2(readAPDUDG2);
-
-			vector<UINT8> secureAPDU = secureReadAPDUDG2.generateRawSecureAPDU(ksEnc, ksMac, SSC);
-			responceRaw = sendReadEFCOM(reader, secureAPDU);
-			APDU::SecureRAPDU readDG2Responce(responceRaw, SSC, ksMac, ksEnc);
-
-			responceData = readDG2Responce.getDecodedResponceData(ksEnc);
-			DG2.write(responceData.data(), responceData.size());
-			DG2.flush();
-			if (!readDG2Responce.isResponceOK()) {
-				break;
-			}
-
-			cout << "Считано " << responceData.size() << " байт" << endl;
-			print_vector_hex(responceData, "Данные");
-			cout << endl;
-
-			offset += responceData.size();
-		}
-		
-		DG2.seekg(0);
-
-		BerTLV::BerTLVDecoder decoder;
-		UINT16 rootIndex = decoder.decode(DG2);
-		UINT16 tag0x61 = decoder.getChildByTag(rootIndex, 0x61);
-		UINT16 tag0x5F1F = decoder.getChildByTag(tag0x61, 0x5F1F);
-
-		vector<UINT8> mrzData = decoder.getTokenData(DG2, tag0x5F1F);
-		for (INT i = 0; i < mrzData.size(); i += 1) {
-			cout << (char)mrzData[i];
-		}
-		cout << endl;
-
-		//BerTLV::BerTLVDecoder decoder;
-		//UINT16 rootIndex = decoder.decode(DG2);
-		//UINT16 tag0x75 = decoder.getChildByTag(rootIndex, 0x75);
-		//UINT16 tag0x7F61 = decoder.getChildByTag(tag0x75, 0x7F61);
-		//UINT16 tag0x7F60 = decoder.getChildByTag(tag0x7F61, 0x7F60);
-		//UINT16 tag0x5F2E = decoder.getChildByTag(tag0x7F60, 0x5F2E);
-		//vector<UINT8> tag0x5F2EData = decoder.getTokenData(DG2, tag0x5F2E);
-		//DG2.close();
-
-		//BerTLV::BerStream rawImageData(tmpfile());
-		//rawImageData.write(tag0x5F2EData.data(), tag0x5F2EData.size());
-		//rawImageData.seekg(0);
-
-		//ImageContainer::Image_ISO19794_5_2006 image(rawImageData);
-		//rawImageData.close();
-
-		//BYTE* imageRaw = image.getRawImage();
-		//UINT32 imageRawSize = image.getRawImageSize();
-
-		//ImageContainer::ImageStream imageToSave("image.jp2", ios::binary | ios::trunc | ios::out);
-		//imageToSave.write(imageRaw, imageRawSize);
-		//imageToSave.close();
+	if (!passport.connectPassport(reader, readerName)) {
+		return 1;
 	}
-	catch (std::exception& e) {
-		cout << e.what() << endl;
+
+	if (!passport.perfomBAC(reader, getMRZCode1())) {
+		return 1;
+	}
+
+	if (!passport.readDG(reader, Passport::DGFILES::DG1)) {
+		return 1;
+	}
+
+	if (!passport.disconnectPassport(reader)) {
+		return 1;
 	}
 
 	return 0;

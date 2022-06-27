@@ -31,27 +31,6 @@ namespace Util {
 	}
 #endif
 
-	/* Функция для получения случайного ID: основана на UUIDv4 */
-	std::string getUUID() {
-		/* Создание статического генератора случайных чисел */
-		/* На основе смещателя Мерсенна */
-		static std::random_device dev;
-		static std::mt19937 rng(dev());
-
-		/* Создание равномернораспределённого отрезка */
-		std::uniform_int_distribution<int> dist(0, 15);
-
-		/* Генерация непосредственно случайного ID */
-		const char v[] = "0123456789abcdef";
-		char output[32] = { 0 };
-		for (int i = 0; i < sizeof(output); i += 2) {
-			output[i] = v[dist(rng)];
-			output[i + 1] = v[dist(rng)];
-		}
-
-		return output;
-	}
-
 	template<typename T>
 	vector<UINT8> castToVector(T val) {
 		UINT8 valRaw[sizeof(T)] = { 0 };

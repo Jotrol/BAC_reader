@@ -284,6 +284,8 @@ namespace ImageContainer {
 
 			return DefWindowProc(hWnd, message, wParam, lParam);
 		}
+
+		HWND getHWND() const { return hWnd; }
 	};
 
 	/* ‘ункиц€ обработки сообщений окна, общей дл€ всех ImageWindow */

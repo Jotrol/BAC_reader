@@ -133,11 +133,9 @@ CHAR* SCardGetErrorString(LONG lRetValue) {
 class CardReader {
 private:
 	SCARDCONTEXT hScardContext;
-	SCARDHANDLE hCardHandle;
-	DWORD activeProtocol;
 
 public:
-	CardReader() : hScardContext(), hCardHandle(), activeProtocol(0) {
+	CardReader() : hScardContext() {
 		/* Начальная инициализация контекста для работы со смарт-картами */
 		LONG lResult = SCardEstablishContext(SCARD_SCOPE_USER, nullptr, nullptr, &hScardContext);
 		if (lResult != SCARD_S_SUCCESS) {
@@ -146,7 +144,7 @@ public:
 	}
 
 	/* Получение списка считывателей в системе */
-	vector<wstring> GetReadersList() {
+	vector<wstring> getReadersList() const {
 		/* Получаем имена считывателей в системе */
 		/* Результат выполнения - кусок памяти, строки в котором записаны подряд, последняя строка - с двумя нулями */
 		LPWSTR pmszReaders = nullptr;
@@ -154,7 +152,6 @@ public:
 		LONG lResult = SCardListReaders(hScardContext, SCARD_ALL_READERS, (LPWSTR)&pmszReaders, &cch);
 		if (lResult != SCARD_S_SUCCESS) {
 			cerr << "Не удалось считать доступные ридеры в системе" << endl;
-			SCardFreeMemory(hScardContext, pmszReaders);
 			return {};
 		}
 
@@ -187,35 +184,39 @@ public:
 	}
 
 	/* Функция выполнения соединения с картой */
-	bool CardConnect(const wstring& readerName) {
+	SCARDHANDLE cardConnect(const wstring& readerName) const {
+        SCARDHANDLE hCard = 0;
+        DWORD dwAp = 0;
+
 		/* Непосредственно устанавливаем соединение по имени кардридера по протоколу T1 (бесконтактный) */
-		LONG lResult = SCardConnect(hScardContext, readerName.data(), SCARD_SHARE_EXCLUSIVE, SCARD_PROTOCOL_Tx, &hCardHandle, &activeProtocol);
+		LONG lResult = SCardConnect(hScardContext, readerName.data(), SCARD_SHARE_EXCLUSIVE, SCARD_PROTOCOL_Tx, &hCard, &dwAp);
 
 		/* Если произошла ошибка или (вдруг) не тот протокол соединения */
 		/* То это выход */
 		if (lResult != SCARD_S_SUCCESS) {
 			cerr << "Не получилось выполнить соединение с картой!" << endl;
-			return false;
+			return 0;
 		}
-		if (activeProtocol != SCARD_PROTOCOL_T1) {
+		if (dwAp != SCARD_PROTOCOL_T1) {
 			cerr << "Неверный протокол соединения" << endl;
-			return false;
+			return 0;
 		}
-		return true;
+		return hCard;
 	}
 
+    /* Функция отключения карты */
+    bool cardDisconnect(SCARDHANDLE hCard) const {
+        return SCardDisconnect(hCard, SCARD_LEAVE_CARD) == SCARD_S_SUCCESS;
+    }
+
 	/* Функция отправки команды */
-	vector<BYTE> SendCommand(vector<BYTE> commandAPDU) const {
+	vector<BYTE> sendCommand(SCARDHANDLE hCard, vector<BYTE> commandAPDU) const {
 		/* Выделение буфера на 256 значений  */
 		DWORD bufferSize = 256;
-		DWORD apduSize = (DWORD)commandAPDU.size();
-		vector<BYTE> buffer(bufferSize);
-
-		SCARD_IO_REQUEST sendRequest = { 0 };
-		sendRequest.dwProtocol = activeProtocol;
-		sendRequest.cbPciLength = 8;
-
-		LONG lReturn = SCardTransmit(hCardHandle, &sendRequest, commandAPDU.data(), apduSize, nullptr, buffer.data(), &bufferSize);
+        DWORD apduSize = (DWORD)commandAPDU.size();
+        vector<BYTE> buffer(bufferSize, 0);
+	    
+		LONG lReturn = SCardTransmit(hCard, SCARD_PCI_T1, commandAPDU.data(), apduSize, nullptr, buffer.data(), &bufferSize);
 		if (lReturn != SCARD_S_SUCCESS) {
 			cerr << hex << lReturn << dec << endl;
 			throw std::exception(SCardGetErrorString(lReturn));
@@ -226,7 +227,6 @@ public:
 	}
 
 	~CardReader() {
-		SCardDisconnect(hCardHandle, SCARD_LEAVE_CARD);
 		SCardReleaseContext(hScardContext);
 	}
 };

@@ -3,36 +3,51 @@
 #include "Crypto.hpp"
 #include "Util.hpp"
 
-extern void print_vector_hex(const vector<UINT8>& data, string msg);
-
 namespace APDU {
 	class APDU {
 	protected:
-		union {
-			UINT8 commandRaw[4];
-			UINT32 commandTag;
-		} commandHeader;
+		UINT8 commandRaw[4];
 		vector<UINT8> commandData;
 		UINT16 Le;
+
+		vector<UINT8> getLeBytes(UINT16 Le) const {
+			UINT8 byte1 = (Le >> 8) & 0xFF;
+			UINT8 byte2 = Le & 0xFF;
+
+			vector<UINT8> leBytes = {};
+			if (byte1) { leBytes.push_back(byte1); }
+			leBytes.push_back(byte2);
+			return leBytes;
+		}
 	public:
 		enum Fields { CLA, INS, P1, P2 };
 
 		APDU(UINT8 CLA = 0, UINT8 INS = 0, UINT8 P1 = 0, UINT8 P2 = 0, const vector<UINT8>& data = {}, UINT16 le = 0) {
-			commandHeader.commandRaw[APDU::Fields::CLA] = CLA;
-			commandHeader.commandRaw[APDU::Fields::INS] = INS;
-			commandHeader.commandRaw[APDU::Fields::P1] = P1;
-			commandHeader.commandRaw[APDU::Fields::P2] = P2;
+			commandRaw[APDU::Fields::CLA] = CLA;
+			commandRaw[APDU::Fields::INS] = INS;
+			commandRaw[APDU::Fields::P1] = P1;
+			commandRaw[APDU::Fields::P2] = P2;
 			commandData = data;
 			Le = le;
 		}
 		void setCommandField(APDU::Fields field, UINT8 val) {
-			commandHeader.commandRaw[field] = val;
+			commandRaw[field] = val;
+		}
+		void setLe(UINT16 le) {
+			Le = le;
 		}
 		void setCommandData(const vector<UINT8>& newData) {
 			commandData = newData;
 		}
 		void appendCommandData(const vector<UINT8>& addData) {
 			commandData.insert(commandData.end(), addData.begin(), addData.end());
+		}
+		vector<UINT8> getCommand() const {
+			vector<UINT8> leBytes = getLeBytes(Le);
+			vector<UINT8> command = { commandRaw[0], commandRaw[1], commandRaw[2], commandRaw[3] };
+			command.insert(command.end(), commandData.begin(), commandData.end());
+			command.insert(command.end(), leBytes.begin(), leBytes.end());
+			return command;
 		}
 	};
 	class SecureAPDU : public APDU {
@@ -61,16 +76,6 @@ namespace APDU {
 			return tokenDO87;
 		}
 
-		vector<UINT8> getLeBytes(UINT16 Le) {
-			UINT8 byte1 = (Le >> 4) & 0xFF;
-			UINT8 byte2 = Le & 0xFF;
-
-			vector<UINT8> leBytes = {};
-			if (byte1) { leBytes.push_back(byte1); }
-			leBytes.push_back(byte2);
-			return leBytes;
-		}
-
 		BerTLV::BerTLVCoderToken generateDO97(UINT16 Le) {
 			/* Создаём тег 0x97, в котором будет лежать длина */
 			BerTLV::BerTLVCoderToken tokenDO97(0x97);
@@ -94,8 +99,8 @@ namespace APDU {
 			vector<UINT8> concat = Util::castToVector(SSC);
 
 			/* Добавляем байты команды для генерирования заполнения */
-			for (INT i = 0; i < sizeof(this->commandHeader.commandRaw); i += 1) {
-				concat.push_back(this->commandHeader.commandRaw[i]);
+			for (INT i = 0; i < sizeof(this->commandRaw); i += 1) {
+				concat.push_back(this->commandRaw[i]);
 			}
 
 			/* Генерация заполнения */
@@ -120,6 +125,8 @@ namespace APDU {
 			return tokenDO8E;
 		}
 	public:
+		SecureAPDU() = default;
+
 		/* Выполняется копирование данных исходной APDU команды */
 		SecureAPDU(const APDU& apduCommand) : APDU(apduCommand) {
 			/* Маскируем байт класса, по стандарту */
@@ -139,7 +146,8 @@ namespace APDU {
 			/* Ибо после заполнения commandRaw в конструкторе APDU, тег станет на любой машине BE */
 			/* А на вход функции в LE машинах предполагается LE число. На BE предполагается BE */
 			/* но функция changeEndiannes на BE машинах ничего не делает */
-			BerTLV::BerTLVCoderToken apduToken(Util::changeEndiannes(this->commandHeader.commandTag));
+			UINT32 commandTag = (commandRaw[0] << 24) | (commandRaw[1] << 16) | (commandRaw[2] << 8) | commandRaw[3];
+			BerTLV::BerTLVCoderToken apduToken(commandTag);
 
 			/* Если данные не нулевые - то добавить */
 			if (tokenDO87.getDataLen() != 0) {
@@ -161,11 +169,10 @@ namespace APDU {
 			/* Получаем байты ожидаемой длины сообщения и вставляем их в конец закодированного APDU сообщения */
 			vector<UINT8> leUINT8s = getLeBytes(this->Le);
 			apduCommand.insert(apduCommand.end(), leUINT8s.begin(), leUINT8s.end());
-			//apduCommand.push_back(0x00);
 			return apduCommand;
 		}
 
-		vector<UINT8> getMessageMac() { return commandMac; }
+		vector<UINT8> getMessageMac() const { return commandMac; }
 	};
 
 	class RAPDU {
@@ -175,6 +182,7 @@ namespace APDU {
 		vector<UINT8> responceData;
 
 	public:
+		RAPDU() = default;
 		RAPDU(const vector<UINT8>& responce) {
 			UINT64 responceSize = responce.size();
 			SW1 = responce[responceSize - 2];
@@ -191,6 +199,13 @@ namespace APDU {
 		UINT64 getResponceDataSize() const {
 			return responceData.size();
 		}
+
+		string report() {
+			stringstream ss;
+			ss << "SW1=" << hex << (int)SW1 << ",SW2=" << hex << (int)SW2;
+			return ss.str();
+		}
+
 		virtual vector<UINT8> getResponceData() const {
 			return responceData;
 		}
@@ -203,7 +218,8 @@ namespace APDU {
 		bool isValid;
 		vector<UINT8> responceDO87DecodedData;
 	public:
-		SecureRAPDU(const vector<UINT8>& responce, UINT64& SSC, const vector<BYTE>& ksMAC, const vector<BYTE>& ksEnc) : RAPDU(responce) {
+		SecureRAPDU() = default;
+		SecureRAPDU(const vector<UINT8>& responce, const vector<BYTE>& ksEnc, const vector<BYTE>& ksMAC, UINT64& SSC) : RAPDU(responce) {
 			/* Получив ответ в виде защищённого RAPDU, его стоит дампнуть во временный файл */
 			//BerTLV::BerStream berStream("rawAPDU.bin", ios::in | ios::out | ios::binary | ios::trunc);
 			BerTLV::BerStream berStream("apduRaw.bin", ios::in | ios::out | ios::binary | ios::trunc);
@@ -263,6 +279,7 @@ namespace APDU {
 				responceDO87DecodedData = des3.decrypt(responceDO87DecodedData, ksEnc);
 
 				/* Убираем заполнение */
+				/* TODO: попробовать вернуть просто поиск 0x80, мб всё будет работать ОК */
 				INT find0x80 = -1;
 				for (INT i = responceDO87DecodedData.size() - 1; i > -1; i -= 1) {
 					if (responceDO87DecodedData[i] == 0x80) {
@@ -271,6 +288,7 @@ namespace APDU {
 					}
 				}
 
+				/* Если не получилось найти 0x80 - то заполнения не было и это невалидные данные */
 				if (find0x80 == -1) {
 					responceDO87DecodedData = {};
 				}
@@ -286,7 +304,7 @@ namespace APDU {
 			return (SW1 == 0x90) && (SW2 == 0x00) && isValid;
 		}
 
-		vector<UINT8> getDecodedResponceData(const vector<BYTE>& ksEnc) const {
+		vector<UINT8> getDecodedResponceData() const {
 			return responceDO87DecodedData;
 		}
 	};
