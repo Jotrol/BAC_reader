@@ -1,23 +1,23 @@
 #include <Windows.h>
 
-#include "Passport.hpp"
+#include "Crypto.hpp"
+#include "CardReader.hpp"
+#include "MRZDecoder.hpp"
 #include "ImageContainer.hpp"
+#include "Passport.hpp"
 
-#include <random>
-#include <ctime>
+#include <fstream>
 using namespace std;
 
-string getMRZCode1() {
-	return "5200000001RUS8008046F0902274<<<<<<<<<<<<<<<06";
+#define IDC_BUTTON_LOAD 0x1000
+#define IDC_BUTTON_CONNECT 0x1001
+
+string getMRZCode() {
+	return "5200000001RUS8008046F0902274<<<<<<<<<<<<<<06";
 }
 
-#define IDC_BUTTON_READ 0x1000
-#define IDC_BUTTON_CLEAR 0x1001
-#define IDC_BUTTON_CONNECT 0x1002
-
-fipImage image;
-bool isLoaded = false;
-BITMAPINFO bmi = { 0 };
+HINSTANCE ghInst = nullptr;
+ImageContainer::ImageWindow* imageWindow = nullptr;
 
 LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 	if (msg == WM_CLOSE) {
@@ -25,58 +25,61 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 		return 0;
 	}
 
-	if (msg == WM_PAINT) {
-		if (isLoaded) {
-			PAINTSTRUCT ps = { 0 };
-			HDC hdc = BeginPaint(hWnd, &ps);
-			FillRect(hdc, &ps.rcPaint, (HBRUSH)(COLOR_WINDOW + 1));
-			SetDIBitsToDevice(hdc, 0, 0, image.getWidth(), image.getHeight(), 0, 0, 0, image.getHeight(), image.accessPixels(), &bmi, DIB_RGB_COLORS);
-			EndPaint(hWnd, &ps);
-			return 0;
-		}
-	}
-
-	if (msg == WM_COMMAND && wParam == IDC_BUTTON_READ) {
-		//ImageContainer::ImageStream container("container.bin", ios::in | ios::out | ios::binary);
-		//container.seekg(0);
-
-		//ImageContainer::Image isoImage(container);
-		//ImageContainer::ImageStream imageFile("image", ios::in | ios::out | ios::trunc);
-		//imageFile.write(isoImage.getRawImage(), isoImage.getRawImageSize());
-		//imageFile.close();
-
-		image.clear();
-		if (!image.load("image.jpg")) {
-			throw std::exception();
-		}
-		if (!image.convertTo24Bits()) {
-			throw std::exception();
+	if (msg == WM_COMMAND && wParam == IDC_BUTTON_LOAD) {
+		if (imageWindow) {
+			DestroyWindow(imageWindow->getHWND());
+			delete imageWindow;
 		}
 
-		bmi.bmiHeader.biWidth = image.getWidth();
-		bmi.bmiHeader.biHeight = image.getHeight();
-		bmi.bmiHeader.biBitCount = image.getBitsPerPixel();
-		bmi.bmiHeader.biPlanes = 1;
+		ifstream file("imageContainer.bin", ios::binary);
+		ImageContainer::Image image(file);
+		imageWindow = new ImageContainer::ImageWindow(ghInst, image, hWnd, 100, 100);
 
-		isLoaded = true;
+		UpdateWindow(hWnd);
 		InvalidateRect(hWnd, nullptr, TRUE);
 		return 0;
 	}
-	
+
+	//if (msg == WM_COMMAND && wParam == IDC_BUTTON_CONNECT) {
+	//	passport.connectPassport(reader, readerName);
+	//	passport.perfomBAC(reader, getMRZCode());
+
+	//	MessageBox(hWnd, L"Успешно!", L"", MB_OK);
+	//}
+
 	return DefWindowProc(hWnd, msg, wParam, lParam);
 }
 
-INT WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrevInstance, LPSTR lpCmdLine, INT nCmdShow) {
+INT WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrevInst, LPSTR lpCmdLine, INT nCmdShow) {
+	//CardReader reader;
+	//auto& readers = reader.getReadersList();
+	//wstring readerName = readers[0];
+
+	//Passport passport;
+	//passport.connectPassport(reader, readerName);
+	//passport.perfomBAC(reader, getMRZCode());
+	//passport.readDG(reader, Passport::DGFILES::DG1);
+	//passport.readDG(reader, Passport::DGFILES::DG2);
+
+	//ByteVec dg2Data = passport.getPassportRawImage();
+	//ofstream ofile("imageContainer.bin", ios::binary | ios::trunc);
+	//ofile.write((char*)dg2Data.data(), dg2Data.size());
+	//ofile.close();
+
+	ImageContainer::ImageWindow::RegisterImageWindowClass(hInst);
+
 	WNDCLASS wc = { 0 };
-	wc.lpfnWndProc = WndProc;
-	wc.hInstance = hInst;
 	wc.lpszClassName = L"MainWindow";
 	wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+	wc.hInstance = hInst;
+	wc.lpfnWndProc = WndProc;
 
+	ghInst = hInst;
 	RegisterClass(&wc);
 
-	HWND hWnd = CreateWindow(L"MainWindow", L"Main Window", WS_OVERLAPPEDWINDOW, 0, 0, 300, 300, nullptr, nullptr, hInst, nullptr);
-	CreateWindow(L"BUTTON", L"Показать изображение", WS_CHILD | WS_OVERLAPPED | WS_VISIBLE | WS_BORDER, 0, 0, 170, 25, hWnd, (HMENU)IDC_BUTTON_READ, hInst, nullptr);
+	HWND hWnd = CreateWindow(L"MainWindow", L"Window", WS_OVERLAPPEDWINDOW, 0, 0, 500, 500, nullptr, nullptr, hInst, nullptr);
+	CreateWindow(L"BUTTON", L"Загрузить", WS_CHILD | WS_VISIBLE, 0, 0, 100, 20, hWnd, (HMENU)IDC_BUTTON_LOAD, hInst, nullptr);
+	CreateWindow(L"BUTTON", L"Connect", WS_CHILD | WS_VISIBLE, 0, 40, 100, 20, hWnd, (HMENU)IDC_BUTTON_CONNECT, hInst, nullptr);
 
 	UpdateWindow(hWnd);
 	ShowWindow(hWnd, nCmdShow);
