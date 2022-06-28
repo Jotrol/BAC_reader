@@ -103,7 +103,7 @@ namespace ImageContainer {
 		}
 
 		UINT32 imgDataSize;
-		unique_ptr<BYTE> imgData;
+		unique_ptr<UINT8> imgData;
 		vector<ControlPoint> imgControlPoints;
 
 		FaceImageHeader faceImageHeader;
@@ -123,11 +123,11 @@ namespace ImageContainer {
 			imgDataSize = faceInformation.faceDataLen - (file.tellg() - faceInfoStart);
 
 			/* Выделяем память под данные изображения и считываем его */
-			imgData.reset(new BYTE[imgDataSize]);
+			imgData.reset(new UINT8[imgDataSize]);
 			file.read((UINT8*)imgData.get(), imgDataSize);
 		}
 
-		BYTE* getRawImage() const {
+		UINT8* getRawImage() const {
 			return imgData.get();
 		}
 		UINT32 getRawImageSize() const {

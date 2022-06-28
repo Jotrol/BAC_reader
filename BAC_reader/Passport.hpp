@@ -26,7 +26,7 @@ private:
 
 	Crypto::Des3& des3 = Crypto::getDes3Alg();
 	Crypto::RetailMAC& mac = Crypto::getMacAlg();
-	Crypto::Sha1 sha1 = Crypto::getSha1Alg();
+	Crypto::Sha1& sha1 = Crypto::getSha1Alg();
 
 public:
 	enum DGFILES { EFCOM, DG1, DG2, DG_COUNT };
@@ -79,6 +79,7 @@ private:
 	}
 public:
 	Passport() {
+		/* Заполняем имена файлов групп данных */
 		dgFileName[DGFILES::DG1] = "DG1.bin";
 		dgFileName[DGFILES::DG2] = "DG2.bin";
 		dgFileName[DGFILES::EFCOM] = "EF_COM.bin";
@@ -138,7 +139,7 @@ public:
 		ByteVec kIFD = {};
 
 		/* Генерируем инициализирующий хэш из данных MRZ */
-		DecoderMRZLine2 decoderMRZLine2(mrzLine2);
+		Line2MRZDecoder decoderMRZLine2(mrzLine2);
 		tempVector1 = sha1.getHash(decoderMRZLine2.ComposeData());
 		tempVector1.resize(16);
 
@@ -256,7 +257,15 @@ public:
 		UINT16 fileOff = 0x00;
 
 		/* Открываем считываемый файл по новой */
+#ifdef _DEBUG
 		dgFile[file] = ByteStream(dgFileName[file], ios::in | ios::out | ios::binary | ios::trunc);
+#else
+		/* В случае временных файлов, сначала надо закрыть предыдущий (чтобы он удалился) */
+		dgFile[file].close();
+
+		/* И открыть новый временный файл */
+		dgFile[file] = ByteStream(tmpfile());
+#endif
 
 		/* Выбираем файл */
 		apdu = SelectFile;

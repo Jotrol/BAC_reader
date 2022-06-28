@@ -236,35 +236,41 @@ namespace BerTLV {
 			return -1;
 		}
 
-		vector<UINT8> getTokenRaw(BerStream& file, UINT16 tokenIndex) {
+		ByteVec getTokenRaw(BerStream& file, UINT16 tokenIndex) {
 			/* Если каким-то образом индекс больше текущего размера массива */
 			if (tokenIndex > tokenSize) {
-				/* То вернуть нулевой указатель */
-				return {};
+				throw std::exception("Ошибка: нет токена с таким индексом");
 			}
 
+			/* Получаем начало этого токена */
 			UINT32 tokenRawStart = 0;
+
+			/* Если его индекс не нулевой, то начало токена равно началу данных прошлого плюс размер данных */
 			if (tokenIndex > 0) {
 				UINT16 prevIndex = tokenIndex - 1;
 				tokenRawStart = tokens[prevIndex].getDataStart() + tokens[prevIndex].getDataLen();
 			}
 
+			/* Получаем конец сырого токена - совпадат с концом данных*/
 			UINT32 tokenRawEnd = tokens[tokenIndex].getDataStart() + tokens[tokenIndex].getDataLen();
 			UINT32 tokenRawLen = tokenRawEnd - tokenRawStart;
 
-			vector<UINT8> rawToken(tokenRawLen, 0);
+			/* Выделяем массив(вектор) */
+			ByteVec rawToken(tokenRawLen, 0);
 			file.seekg(tokenRawStart);
+
+			/* Считываем в этот массив */
 			file.read(rawToken.data(), tokenRawLen);
 			return rawToken;
 		}
 
 		/* Функция для получения данных тега */
-		vector<UINT8> getTokenData(BerStream& stream, UINT16 tokenIndex) {
+		ByteVec getTokenData(BerStream& stream, UINT16 tokenIndex) {
 			BerTLVDecoderToken* token = &tokens[tokenIndex];
 			stream.seekg(token->getDataStart());
 
 			UINT32 tokenDataLen = token->getDataLen();
-			vector<UINT8> data(tokenDataLen, 0);
+			ByteVec data(tokenDataLen, 0);
 			stream.read(data.data(), tokenDataLen);
 			return data;
 		}
@@ -275,8 +281,8 @@ namespace BerTLV {
 		BerTagType berTagType;
 
 		vector<BerTLVCoderToken> childTokens;
-		vector<UINT8> berData;
-		vector<UINT8> berTag;
+		ByteVec berData;
+		ByteVec berTag;
 
 		UINT8 getFirstNonZeroByteIndex(UINT8* arr, UINT8 arrLen) const {
 			UINT8 nonZeroIndex = 0;
@@ -284,7 +290,7 @@ namespace BerTLV {
 			return nonZeroIndex;
 		}
 
-		vector<UINT8> encodeLen(UINT64 berLen) const {
+		ByteVec encodeLen(UINT64 berLen) const {
 			if (berLen < 0x80ULL) {
 				return { (UINT8)(berLen & 0xFF) };
 			}
@@ -295,20 +301,20 @@ namespace BerTLV {
 			
 			UINT8 nonZero = getFirstNonZeroByteIndex(lenRaw, sizeof(UINT64));
 			UINT8 lenSize = sizeof(UINT64) - nonZero;
-			vector<UINT8> lenEnc = { lenSize };
+			ByteVec lenEnc = { lenSize };
 			for (UINT i = 0; i < sizeof(UINT64); i += 1) {
 				lenEnc.push_back(lenRaw[i]);
 			}
 			return lenEnc;
 		}
-		vector<UINT8> encodeValue() const {
+		ByteVec encodeValue() const {
 			if (berTagType == BerTagType::PRIMITIVE) {
 				return berData;
 			}
 
-			vector<UINT8> value;
+			ByteVec value;
 			for (auto& child : childTokens) {
-				vector<UINT8> childEnc = child.encode();
+				ByteVec childEnc = child.encode();
 				value.insert(value.end(), childEnc.begin(), childEnc.end());
 			}
 
@@ -341,26 +347,25 @@ namespace BerTLV {
 				berData.push_back(data[i]);
 			}
 		}
-		void addData(const vector<UINT8>& data) {
+		void addData(const ByteVec& data) {
 			berData.insert(berData.end(), data.begin(), data.end());
 		}
 		void addChild(BerTLVCoderToken& child) {
 			childTokens.push_back(child);
 		}
 
-		vector<UINT8> encode() const {
+		ByteVec encode() const {
 			/* Кодируем данные тега */
-			vector<UINT8> valEnc = encodeValue();
+			ByteVec valEnc = encodeValue();
 
 			/* Если данных нет - то нет и тега, логично? */
 			if (valEnc.size() == 0) {
 				return {};
 			}
 
-			vector<UINT8> lenEnc = encodeLen(valEnc.size());
+			ByteVec lenEnc = encodeLen(valEnc.size());
 
-			vector<UINT8> result;
-			result.insert(result.end(), berTag.begin(), berTag.end());
+			ByteVec result(berTag.begin(), berTag.end());
 			result.insert(result.end(), lenEnc.begin(), lenEnc.end());
 			result.insert(result.end(), valEnc.begin(), valEnc.end());
 

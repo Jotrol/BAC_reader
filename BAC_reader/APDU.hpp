@@ -10,22 +10,25 @@ namespace APDU {
 	class APDU {
 	protected:
 		UINT8 commandRaw[4];
-		vector<UINT8> commandData;
+		ByteVec commandData;
 		UINT16 Le;
 
-		vector<UINT8> getLeBytes(UINT16 Le) const {
+		/* Перевод байтов длины в вектор */
+		ByteVec getLeBytes(UINT16 Le) const {
+			/* Получаем каждый байт отдельно */
 			UINT8 byte1 = (Le >> 8) & 0xFF;
 			UINT8 byte2 = Le & 0xFF;
 
-			vector<UINT8> leBytes = {};
-			if (byte1) { leBytes.push_back(byte1); }
-			leBytes.push_back(byte2);
-			return leBytes;
+			/* Возвращем либо один, либо два байта */
+			/* Зависит от того, каков первый байт */
+			if (byte1) { return { byte1, byte2 }; }
+			return { byte2 };
 		}
 	public:
+		/* Поля APDU запроса */
 		enum Fields { CLA, INS, P1, P2 };
 
-		APDU(UINT8 CLA = 0, UINT8 INS = 0, UINT8 P1 = 0, UINT8 P2 = 0, const vector<UINT8>& data = {}, UINT16 le = 0) {
+		APDU(UINT8 CLA = 0, UINT8 INS = 0, UINT8 P1 = 0, UINT8 P2 = 0, const ByteVec& data = {}, UINT16 le = 0) {
 			commandRaw[APDU::Fields::CLA] = CLA;
 			commandRaw[APDU::Fields::INS] = INS;
 			commandRaw[APDU::Fields::P1] = P1;
@@ -33,30 +36,42 @@ namespace APDU {
 			commandData = data;
 			Le = le;
 		}
+
+		/* Установка поля */
 		void setCommandField(APDU::Fields field, UINT8 val) {
 			commandRaw[field] = val;
 		}
+
+		/* Установка длины */
 		void setLe(UINT16 le) {
 			Le = le;
 		}
-		void setCommandData(const vector<UINT8>& newData) {
+
+		/* Ставим (заменяя) данные запроса */
+		void setCommandData(const ByteVec& newData) {
 			commandData = newData;
 		}
-		void appendCommandData(const vector<UINT8>& addData) {
+
+		/* Дописываем к данным запроса */
+		void appendCommandData(const ByteVec& addData) {
 			commandData.insert(commandData.end(), addData.begin(), addData.end());
 		}
-		vector<UINT8> getCommand() const {
-			vector<UINT8> leBytes = getLeBytes(Le);
-			vector<UINT8> command = { commandRaw[0], commandRaw[1], commandRaw[2], commandRaw[3] };
+
+		/* Получение команды в виде вектора для отправки */
+		ByteVec getCommand() const {
+			ByteVec leBytes = getLeBytes(Le);
+			ByteVec command = { commandRaw[0], commandRaw[1], commandRaw[2], commandRaw[3] };
 			command.insert(command.end(), commandData.begin(), commandData.end());
 			command.insert(command.end(), leBytes.begin(), leBytes.end());
 			return command;
 		}
 	};
-	class SecureAPDU : public APDU {
-		vector<UINT8> commandMac;
 
-		BerTLV::BerTLVCoderToken generateDO87(const vector<UINT8>& ksEnc) {
+	/* Безопасный запрос, конструируется из небезопасного */
+	class SecureAPDU : public APDU {
+	private:
+		/* Генерация DO'87' */
+		BerTLV::BerTLVCoderToken generateDO87(const ByteVec& ksEnc) {
 			/* Получим алгоритм шифрования */
 			Crypto::Des3& des3 = Crypto::getDes3Alg();
 
@@ -66,8 +81,8 @@ namespace APDU {
 			/* Если длина данных равна нулю, то DO87 не генерируется */
 			if (this->commandData.size() != 0) {
 				/* Сначала зашифруем данные */
-				vector<UINT8> dataFilled = Crypto::fillISO9797(this->commandData, des3.getBlockLen());
-				vector<UINT8> encrypted = des3.encrypt(dataFilled, ksEnc);
+				ByteVec dataFilled = Crypto::fillISO9797(this->commandData, des3.getBlockLen());
+				ByteVec encrypted = des3.encrypt(dataFilled, ksEnc);
 
 				/* Добавление 0x01 в начале зашифрованных данных; так в стандарте сказано */
 				encrypted.insert(encrypted.begin(), 0x01);
@@ -79,6 +94,7 @@ namespace APDU {
 			return tokenDO87;
 		}
 
+		/* Генерация DO'97' */
 		BerTLV::BerTLVCoderToken generateDO97(UINT16 Le) {
 			/* Создаём тег 0x97, в котором будет лежать длина */
 			BerTLV::BerTLVCoderToken tokenDO97(0x97);
@@ -92,14 +108,15 @@ namespace APDU {
 			return tokenDO97;
 		}
 
-		BerTLV::BerTLVCoderToken generateDO8E(const vector<UINT8>& ksMac, UINT64& SSC, const BerTLV::BerTLVCoderToken& DO87, const BerTLV::BerTLVCoderToken& DO97) {
+		/* Генерация DO'8E' */
+		BerTLV::BerTLVCoderToken generateDO8E(const ByteVec& ksMac, UINT64& SSC, const BerTLV::BerTLVCoderToken& DO87, const BerTLV::BerTLVCoderToken& DO97) {
 			Crypto::RetailMAC& mac = Crypto::getMacAlg();
 
 			/* Увеличиваем SSC на 1 */
 			SSC += 1;
 
 			/* Получаем его байты и генерируем конкатенацию SSC, заполненной команды, DO87 и DO97 */
-			vector<UINT8> concat = Util::castToVector(SSC);
+			ByteVec concat = Util::castToVector(SSC);
 
 			/* Добавляем байты команды для генерирования заполнения */
 			for (INT i = 0; i < sizeof(this->commandRaw); i += 1) {
@@ -111,16 +128,16 @@ namespace APDU {
 
 			/* После заполнения добавляем DO87 и DO97 (конечно, если они не нулевые) */
 			if (DO87.getDataLen() != 0) {
-				vector<UINT8> encDO87 = DO87.encode();
+				ByteVec encDO87 = DO87.encode();
 				concat.insert(concat.end(), encDO87.begin(), encDO87.end());
 			}
 			if (DO97.getDataLen() != 0) {
-				vector<UINT8> encDO97 = DO97.encode();
+				ByteVec encDO97 = DO97.encode();
 				concat.insert(concat.end(), encDO97.begin(), encDO97.end());
 			}
 
 			/* Без заполнения, потому что алгоритм getMAC сам это умеет делать */
-			commandMac = mac.getMAC(concat, ksMac);
+			ByteVec commandMac = mac.getMAC(concat, ksMac);
 
 			/* Формируем BER-TLV тег с номером 0x8E */
 			BerTLV::BerTLVCoderToken tokenDO8E(0x8E);
@@ -136,7 +153,7 @@ namespace APDU {
 			this->setCommandField(APDU::Fields::CLA, 0x0C);
 		}
 
-		vector<UINT8> generateRawSecureAPDU(const vector<UINT8>& ksEnc, const vector<UINT8>& ksMac, UINT64& SSC) {
+		vector<UINT8> generateRawSecureAPDU(const ByteVec& ksEnc, const ByteVec& ksMac, UINT64& SSC) {
 			/* Генерируем части APDU ответа в виде токенов BER-TLV */
 			BerTLV::BerTLVCoderToken tokenDO87 = this->generateDO87(ksEnc);
 			BerTLV::BerTLVCoderToken tokenDO97 = this->generateDO97(this->Le);
@@ -154,39 +171,38 @@ namespace APDU {
 
 			/* Если данные не нулевые - то добавить */
 			if (tokenDO87.getDataLen() != 0) {
-				vector<UINT8> encTokenDO87 = tokenDO87.encode();
+				ByteVec encTokenDO87 = tokenDO87.encode();
 				apduToken.addData(encTokenDO87);
 			}
 			if (tokenDO97.getDataLen() != 0) {
-				vector<UINT8> encTokenDO97 = tokenDO97.encode();
+				ByteVec encTokenDO97 = tokenDO97.encode();
 				apduToken.addData(encTokenDO97);
 			}
 			if (tokenDO8E.getDataLen() != 0) {
-				vector<UINT8> encTokenDO8E = tokenDO8E.encode();
+				ByteVec encTokenDO8E = tokenDO8E.encode();
 				apduToken.addData(encTokenDO8E);
 			}
 
 			/* Формируем команду APDU */
-			vector<UINT8> apduCommand = apduToken.encode();
+			ByteVec apduCommand = apduToken.encode();
 
 			/* Получаем байты ожидаемой длины сообщения и вставляем их в конец закодированного APDU сообщения */
-			vector<UINT8> leUINT8s = getLeBytes(this->Le);
+			ByteVec leUINT8s = getLeBytes(this->Le);
 			apduCommand.insert(apduCommand.end(), leUINT8s.begin(), leUINT8s.end());
 			return apduCommand;
 		}
-
-		vector<UINT8> getMessageMac() const { return commandMac; }
 	};
 
+	/* Незащищённый ответ */
 	class RAPDU {
 	protected:
 		UINT8 SW1 = 0;
 		UINT8 SW2 = 0;
-		vector<UINT8> responceData;
+		ByteVec responceData;
 
 	public:
 		RAPDU() = default;
-		RAPDU(const vector<UINT8>& responce) {
+		RAPDU(const ByteVec& responce) {
 			UINT64 responceSize = responce.size();
 			SW1 = responce[responceSize - 2];
 			SW2 = responce[responceSize - 1];
@@ -199,33 +215,43 @@ namespace APDU {
 			}
 		}
 		
+		/* Узнаём размер данных ответа */
 		UINT64 getResponceDataSize() const {
 			return responceData.size();
 		}
 
+		/* Удобная функция оповещения о том, что вернул запрос */
 		std::string report() {
 			std::stringstream ss;
 			ss << "SW1=" << hex << (int)SW1 << ",SW2=" << hex << (int)SW2;
 			return ss.str();
 		}
 
-		virtual vector<UINT8> getResponceData() const {
+		/* Получение данных ответа */
+		ByteVec getResponceData() const {
 			return responceData;
 		}
 
+		/* Успешен ли запрос */
 		virtual bool isResponceOK() const {
 			return (SW1 == 0x90) && (SW2 == 0x00);
 		}
 	};
+
+	/* Защищённый ответ */
 	class SecureRAPDU : public RAPDU {
-		bool isValid;
-		vector<UINT8> responceDO87DecodedData;
+		bool isValid = false;
+		ByteVec responceDO87DecodedData;
 	public:
 		SecureRAPDU() = default;
-		SecureRAPDU(const vector<UINT8>& responce, const vector<BYTE>& ksEnc, const vector<BYTE>& ksMAC, UINT64& SSC) : RAPDU(responce) {
+		SecureRAPDU(const ByteVec& responce, const ByteVec& ksEnc, const ByteVec& ksMAC, UINT64& SSC) : RAPDU(responce) {
 			/* Получив ответ в виде защищённого RAPDU, его стоит дампнуть во временный файл */
-			//BerTLV::BerStream berStream("rawAPDU.bin", ios::in | ios::out | ios::binary | ios::trunc);
+		#ifdef _DEBUG
 			BerTLV::BerStream berStream("apduRaw.bin", ios::in | ios::out | ios::binary | ios::trunc);
+		#else
+			/* Откроем временный файл, чтобы он сам удалился после закрытия */
+			BerTLV::BerStream berStream(tmpfile());
+		#endif
 
 			/* Записываем полученные данные в файл, а затем возвращаем каретку для считывания в начало файлаы */
 			berStream.write(this->responceData.data(), this->responceData.size());
@@ -247,29 +273,30 @@ namespace APDU {
 
 			/* Составляем конкатенацию данных на основе того, какие теги найдены */
 			SSC += 1;
-			vector<UINT8> concat = Util::castToVector(SSC);
+			ByteVec concat = Util::castToVector(SSC);
 
 			if (do87Index != -1) {
-				vector<UINT8> rawDO87 = bertlvDecoder.getTokenRaw(berStream, do87Index);
+				ByteVec rawDO87 = bertlvDecoder.getTokenRaw(berStream, do87Index);
 				concat.insert(concat.end(), rawDO87.begin(), rawDO87.end());
 			}
 			if (do99Index != -1) {
-				vector<UINT8> rawDO99 = bertlvDecoder.getTokenRaw(berStream, do99Index);
+				ByteVec rawDO99 = bertlvDecoder.getTokenRaw(berStream, do99Index);
 				concat.insert(concat.end(), rawDO99.begin(), rawDO99.end());
 			}
 
 			/* Получим MAC сообщения, который нам передали */
-			vector<UINT8> responceMAC = bertlvDecoder.getTokenData(berStream, do8EIndex);
+			ByteVec responceMAC = bertlvDecoder.getTokenData(berStream, do8EIndex);
 
 			/* Посчитаем MAC сообщения сами */
 			Crypto::RetailMAC& mac = Crypto::getMacAlg();
-			vector<UINT8> computedMAC = mac.getMAC(concat, ksMAC);
+			ByteVec computedMAC = mac.getMAC(concat, ksMAC);
 
 			isValid = (computedMAC == responceMAC);
 			if (!isValid) {
 				return;
 			}
 
+			/* Если присутствует тег данных */
 			if (do87Index != -1) {
 				responceData = bertlvDecoder.getTokenData(berStream, do87Index);
 
@@ -303,11 +330,13 @@ namespace APDU {
 			berStream.close();
 		}
 
+		/* Успешен ли запрос и при этом, верен ли */
 		virtual bool isResponceOK() const {
 			return (SW1 == 0x90) && (SW2 == 0x00) && isValid;
 		}
 
-		vector<UINT8> getDecodedResponceData() const {
+		/* Получаем расшифрованные данные ответа */
+		ByteVec getDecodedResponceData() const {
 			return responceDO87DecodedData;
 		}
 	};
