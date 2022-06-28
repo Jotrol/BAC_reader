@@ -289,7 +289,7 @@ namespace GUI {
 
 			/* Поле ввода второй MRZ строки, кнопки считывания и очистки */
 			CreateWindow(L"BUTTON", L"Ввод", WS_CHILD | WS_VISIBLE | BS_GROUPBOX | BS_CENTER, 330, 338, 385, 82, hWnd, nullptr, hInst, nullptr);
-			CreateWindow(L"EDIT", L"", widgetStyle, 340, 358, 363, 20, hWnd, (HMENU)IDC_INPUT_MRZ, hInst, nullptr);
+			CreateWindow(L"EDIT", L"", widgetStyle, 340, 358, 375, 20, hWnd, (HMENU)IDC_INPUT_MRZ, hInst, nullptr);
 
 			CreateWindow(L"BUTTON", L"Считать", widgetStyle | BS_CENTER, 340, 388, 90, 20, hWnd, (HMENU)IDC_BUTTON_LOAD, hInst, nullptr);
 			CreateWindow(L"BUTTON", L"Очистить", widgetStyle | BS_CENTER, 450, 388, 90, 20, hWnd, (HMENU)IDC_BUTTON_CLEAR, hInst, nullptr);
@@ -359,7 +359,7 @@ namespace GUI {
 				PostThreadMessage(passportConnectionThread, WM_COMMAND, (WPARAM)ThreadActions::ReadDG1, (LPARAM)mrzStrRaw);
 
 				/* На чтение второй группы данных - фото */
-				//PostThreadMessage(passportConnectionThread, WM_COMMAND, (WPARAM)ThreadActions::ReadDG2, 0);
+				PostThreadMessage(passportConnectionThread, WM_COMMAND, (WPARAM)ThreadActions::ReadDG2, 0);
 
 				/* На отключение паспорта */
 				PostThreadMessage(passportConnectionThread, WM_COMMAND, (WPARAM)ThreadActions::Disconnect, 0);
@@ -393,6 +393,10 @@ namespace GUI {
 					SetDlgItemTextA(hWnd, IDC_PASSPORT_TYPE + i, mrzDecoder.infoVec[i].c_str());
 				}
 				
+				/* Ставим позицию на ноль в индикаторе прогресса */
+				SendMessage(hProgressBar, PBM_SETPOS, 0, 0);
+
+				/* Обновляем окно */
 				UpdateWindow(hWnd);
 			}
 
@@ -407,6 +411,12 @@ namespace GUI {
 
 				/* И закрываем контейнер */
 				imgContainerFile->close();
+
+				/* Ставим позицию на ноль в индикаторе прогресса */
+				SendMessage(hProgressBar, PBM_SETPOS, 0, 0);
+
+				/* Обновляем окно */
+				UpdateWindow(hWnd);
 			}
 
 			return DefWindowProc(hWnd, msg, wParam, lParam);
