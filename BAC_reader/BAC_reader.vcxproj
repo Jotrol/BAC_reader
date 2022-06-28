@@ -152,6 +152,7 @@
     <ClInclude Include="CardReader.hpp" />
     <ClInclude Include="Crypto.hpp" />
     <ClInclude Include="FreeImage.h" />
+    <ClInclude Include="GUI.hpp" />
     <ClInclude Include="ImageContainer.hpp" />
     <ClInclude Include="MRZDecoder.hpp" />
     <ClInclude Include="Passport.hpp" />

@@ -180,8 +180,8 @@ namespace APDU {
 
 	class RAPDU {
 	protected:
-		UINT8 SW1;
-		UINT8 SW2;
+		UINT8 SW1 = 0;
+		UINT8 SW2 = 0;
 		vector<UINT8> responceData;
 
 	public:

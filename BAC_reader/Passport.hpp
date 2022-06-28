@@ -1,5 +1,7 @@
 #pragma once
 
+#include <CommCtrl.h>
+
 #include "APDU.hpp"
 #include "CardReader.hpp"
 #include "MRZDecoder.hpp"
@@ -38,6 +40,7 @@ private:
 	ByteVec kMac;
 
 	ByteStream dgFile[DGFILES::DG_COUNT];
+	string dgFileName[DGFILES::DG_COUNT];
 	ByteVec dgID[DGFILES::DG_COUNT];
 	UINT8 dgTag[DGFILES::DG_COUNT];
 
@@ -72,18 +75,13 @@ private:
 
 		/* Шифруем в итоге rndIFD | rndICC | kIFD */
 		S = des3.encrypt(S, kEnc);
-
-		/* Размер может получится больше, а нам нужны только 32 байта */
-		//S.resize(32);
 		return S;
 	}
 public:
 	Passport() {
-		/* Создаём временные файлы для каждой группы данных */
-		/* Может быть пределано в создание временных файлов */
-		dgFile[DGFILES::DG1] = ByteStream("DG1.bin", ios::binary | ios::in | ios::out | ios::trunc);
-		dgFile[DGFILES::DG2] = ByteStream("DG2.bin", ios::binary | ios::in | ios::out | ios::trunc);
-		dgFile[DGFILES::EFCOM] = ByteStream("EF_COM.bin", ios::binary | ios::in | ios::out | ios::trunc);
+		dgFileName[DGFILES::DG1] = "DG1.bin";
+		dgFileName[DGFILES::DG2] = "DG2.bin";
+		dgFileName[DGFILES::EFCOM] = "EF_COM.bin";
 
 		/* Заполняем идентификаторы файлов */
 		dgID[DGFILES::DG1] = { 0x01, 0x01 };
@@ -103,17 +101,15 @@ public:
 	}
 
 	/* Функция соединения паспорта с кардридером, не BAC! */
-	bool connectPassport(const CardReader& reader, const wstring& readerName) {
+	void connectPassport(const CardReader& reader, const wstring& readerName) {
 		hCard = reader.cardConnect(readerName);
 		if (hCard == 0) {
-			cerr << "Ошибка: не удалось соединиться с картой" << endl;
-			return false;
+			throw std::exception("Ошибка: не удалось соединиться с картой");
 		}
-		return true;
 	}
 
 	/* Функция отключения паспорта от ридера */
-	bool disconnectPassport(const CardReader& reader) {
+	void disconnectPassport(const CardReader& reader) {
 		/* Ставим флажок, чтобы нельзя было считать данные */
 		isConnectedViaBAC = false;
 
@@ -123,11 +119,11 @@ public:
 		}
 
 		/* Отключаем паспорт */
-		return reader.cardDisconnect(hCard);
+		reader.cardDisconnect(hCard);
 	}
 
 	/* Функция выполнения соединения по протоколу Basic Access Control */
-	bool perfomBAC(const CardReader& reader, string mrzLine2) {
+	void perfomBAC(const CardReader& reader, string mrzLine2) {
 		/* Временные переменные для хранения данных */
 		/* Необходимых для подключения по BAC */
 		APDU::APDU tempAPDU;
@@ -155,16 +151,14 @@ public:
 		tempVector1 = reader.sendCommand(hCard, SelectApp.getCommand());
 		tempRAPDU = APDU::RAPDU(tempVector1);
 		if (!tempRAPDU.isResponceOK()) {
-			cerr << "Ошибка: произошла ошибка в SelectApp: " << tempRAPDU.report() << endl;
-			return false;
+			throw std::exception(("Ошибка: произошла ошибка в SelectApp: " + tempRAPDU.report()).c_str());
 		}
 
 		/* Получаем случайное число */
 		tempVector1 = reader.sendCommand(hCard, GetICC.getCommand());
 		tempRAPDU = APDU::RAPDU(tempVector1);
 		if (!tempRAPDU.isResponceOK()) {
-			cerr << "Ошибка: не удалось получить RICC: " << tempRAPDU.report() << endl;
-			return false;
+			throw std::exception(("Ошибка: не удалось получить RICC: " + tempRAPDU.report()).c_str());
 		}
 
 		/* Получив случайное число от МСПД, сами генерируем случайные числа */
@@ -194,8 +188,7 @@ public:
 		tempVector1 = reader.sendCommand(hCard, tempAPDU.getCommand());
 		tempRAPDU = APDU::RAPDU(tempVector1);
 		if (!tempRAPDU.isResponceOK()) {
-			cerr << "Ошибка: не удалось отправить CmdData: " << tempRAPDU.report() << endl;
-			return false;
+			throw std::exception(("Ошибка: не удалось отправить CmdData: " + tempRAPDU.report()).c_str());
 		}
 
 		/* Проверка ответа на команду EXTERNAL_AUTHENTICATE */
@@ -209,8 +202,7 @@ public:
 		/* Считаем MAC от верхних 32 байт */
 		tempVector1 = mac.getMAC(tempVector1, kMac);
 		if (tempVector1 != tempVector2) {
-			cerr << "Ошибка: не совпал MAC в respData: " << endl;
-			return false;
+			throw std::exception("Ошибка: не совпал MAC в respData: ");
 		}
 
 		/* Получаем данные ответа заново */
@@ -225,8 +217,7 @@ public:
 		/* Проверяем, что получили то же rndIFD */
 		tempVector2 = ByteVec(tempVector1.begin() + 8, tempVector1.begin() + 16);
 		if (tempVector2 != rIFD) {
-			cerr << "Ошибка: rndIFD не одинаков" << endl;
-			return false;
+			throw std::exception("Ошибка: rndIFD не одинаков");
 		}
 
 		/* Выделяем новый kSeed  */
@@ -245,14 +236,12 @@ public:
 
 		/* Ура, BAC состоялся */
 		isConnectedViaBAC = true;
-		return true;
 	}
 
-	bool readDG(const CardReader& reader, DGFILES file) {
+	void readDG(const CardReader& reader, DGFILES file, HWND progressBarHwnd = nullptr) {
 		/* Если не было установлено соединение - то нельзя и считать данные */
 		if (!isConnectedViaBAC) {
-			cerr << "Ошибка: нет соединения по BAC" << endl;
-			return false;
+			throw std::exception("Ошибка: нет соединения по BAC");
 		}
 
 		APDU::APDU apdu;
@@ -266,6 +255,9 @@ public:
 		UINT16 fileLen = 0x00;
 		UINT16 fileOff = 0x00;
 
+		/* Открываем считываемый файл по новой */
+		dgFile[file] = ByteStream(dgFileName[file], ios::in | ios::out | ios::binary | ios::trunc);
+
 		/* Выбираем файл */
 		apdu = SelectFile;
 		apdu.appendCommandData(dgID[file]);
@@ -277,8 +269,7 @@ public:
 		/* Получаем ответ и проверям его */
 		secRAPDU = APDU::SecureRAPDU(tempVector1, kEnc, kMac, SSC);
 		if (!secRAPDU.isResponceOK()) {
-			cerr << "Ошибка: не удалось отправить команду Select: " << secRAPDU.report() << endl;
-			return false;
+			throw std::exception(("Ошибка: не удалось отправить команду Select: " + secRAPDU.report()).c_str());
 		}
 
 		/* Считываем первые 15 байт (ну или сколько сможет дать) чтобы узнать размер файла */
@@ -289,8 +280,7 @@ public:
 		tempVector1 = reader.sendCommand(hCard, secAPDU.generateRawSecureAPDU(kEnc, kMac, SSC));
 		secRAPDU = APDU::SecureRAPDU(tempVector1, kEnc, kMac, SSC);
 		if (!secRAPDU.isResponceOK()) {
-			cerr << "Ошибка: не удалось считать длину файла: " << secRAPDU.report() << endl;
-			return false;
+			throw std::exception(("Ошибка: не удалось считать длину файла: " + secRAPDU.report()).c_str());
 		}
 
 		/* Записываем полученные байты в файл группы данных */
@@ -300,19 +290,23 @@ public:
 
 		/* 2 байта размера - это минимум для DG1, например */
 		if (tempVector1.size() < 0x02) {
-			cerr << "Ошибка: не удалось узнать длину файла" << endl;
-			return false;
+			throw std::exception("Ошибка: не удалось узнать длину файла");
 		}
 
 		/* Получаем длину файла с проверкой первого тега */
 		fileLen = BerTLV::BerDecodeLenBytes(tempVector1, dgTag[file]);
 		if (fileLen == -1) {
-			cerr << "Ошибка: неверная длина файла" << endl;
-			return false;
+			throw std::exception("Ошибка: неверная длина файла");
 		}
 
 		/* Начинаем считывание всего файла */
 		fileOff = tempVector1.size();
+
+		if (progressBarHwnd) {
+			SendMessage(progressBarHwnd, PBM_SETRANGE, 0, MAKELPARAM(0, fileLen - fileOff));
+			SendMessage(progressBarHwnd, PBM_SETSTEP, (WPARAM)0xF, 0);
+		}
+		
 		while (fileOff < fileLen) {
 			/* Создаём команду для отправки */
 			apdu = ReadBinary;
@@ -327,8 +321,7 @@ public:
 			/* Получаем ответ и производим его проверку */
 			secRAPDU = APDU::SecureRAPDU(tempVector1, kEnc, kMac, SSC);
 			if (!secRAPDU.isResponceOK()) {
-				cerr << "Ошибка: не удалось считать файл: " << secRAPDU.report() << endl;
-				return false;
+				throw std::exception(("Ошибка: не удалось считать файл: " + secRAPDU.report()).c_str());
 			}
 
 			/* Записываем расшифрованный ответ в файл */
@@ -339,42 +332,40 @@ public:
 			/* Увеличиваем смещение файла */
 			fileOff += tempVector1.size();
 
-			std::cout << "\rСчитано: " << (float)fileOff / fileLen * 100.0f << " %";
+			if (progressBarHwnd) {
+				SendMessage(progressBarHwnd, PBM_STEPIT, 0, 0);
+			}
 		}
-		std::cout << std::endl;
-		return true;
 	}
 
 	ByteVec getPassportRawImage() {
-		dgFile[DGFILES::DG2].seekg(0);
+		if (!dgFile[DGFILES::DG2].is_open()) {
+			throw std::exception("Ошибка: файл DG2 не считан!");
+		}
 
 		BerTLV::BerTLVDecoder decoder;
 		UINT16 rootIndex = decoder.decode(dgFile[DGFILES::DG2]);
 		
 		INT16 tag0x75 = decoder.getChildByTag(rootIndex, 0x75);
 		if (tag0x75 == -1) {
-			cerr << "Ошибка: не удалось получить тег 0x75" << endl;
-			return {};
+			throw std::exception("Ошибка: не удалось получить тег 0x75");
 		}
 
 		INT16 tag0x7F61 = decoder.getChildByTag(tag0x75, 0x7F61);
 		if (tag0x7F61 == -1) {
-			cerr << "Ошибка: не удалось получить тег 0x7F61" << endl;
-			return {};
+			throw std::exception("Ошибка: не удалось получить тег 0x7F61");
 		}
 
 		INT16 tag0x7F60 = decoder.getChildByTag(tag0x7F61, 0x7F60);
 		if (tag0x7F60 == -1) {
-			cerr << "Ошибка: не удалось получить тег 0x7F60" << endl;
-			return {};
+			throw std::exception("Ошибка: не удалось получить тег 0x7F60");
 		}
 
 		INT16 tagImage = decoder.getChildByTag(tag0x7F60, 0x7F2E);
 		if (tagImage == -1) {
 			tagImage = decoder.getChildByTag(tag0x7F60, 0x5F2E);
 			if (tagImage == -1) {
-				cerr << "Ошибка: не удалось получить изображение по тегам 0x7F2E и 0x5F2E" << endl;
-				return {};
+				throw std::exception("Ошибка: не удалось получить изображение по тегам 0x7F2E и 0x5F2E");
 			}
 		}
 
@@ -382,21 +373,21 @@ public:
 	}
 
 	ByteVec getPassportMRZ() {
-		dgFile[DGFILES::DG1].seekg(0);
+		if (!dgFile[DGFILES::DG1].is_open()) {
+			throw std::exception("Ошибка: файл DG1 не считан!");
+		}
 
 		BerTLV::BerTLVDecoder decoder;
 		UINT16 rootIndex = decoder.decode(dgFile[DGFILES::DG1]);
 
 		INT16 tag0x61 = decoder.getChildByTag(rootIndex, 0x61);
 		if (tag0x61 == -1) {
-			cerr << "Ошибка: не удалось обнаружить тег 0x61" << endl;
-			return {};
+			throw std::exception("Ошибка: не удалось обнаружить тег 0x61");
 		}
 
 		INT16 tag0x5F1F = decoder.getChildByTag(tag0x61, 0x5F1F);
 		if (tag0x5F1F == -1) {
-			cerr << "Ошибка: не удалось обнаружить тег 0x5F1F" << endl;
-			return {};
+			throw std::exception("Ошибка: не удалось обнаружить тег 0x5F1F");
 		}
 
 		return decoder.getTokenData(dgFile[DGFILES::DG1], tag0x5F1F);

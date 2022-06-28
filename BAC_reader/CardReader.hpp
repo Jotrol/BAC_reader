@@ -103,7 +103,7 @@ CHAR* SCardGetErrorString(LONG lRetValue) {
     case 0x8010002d:
         return "SCard certificate unavailable";
     case 0x8010002e:
-        return "SCard no readers available";
+return "SCard no readers available";
     case 0x80100065:
         return "SCard warning unsupported card";
     case 0x80100066:
@@ -132,81 +132,78 @@ CHAR* SCardGetErrorString(LONG lRetValue) {
 
 class CardReader {
 private:
-	SCARDCONTEXT hScardContext;
+    SCARDCONTEXT hScardContext;
 
 public:
-	CardReader() : hScardContext() {
-		/* Начальная инициализация контекста для работы со смарт-картами */
-		LONG lResult = SCardEstablishContext(SCARD_SCOPE_USER, nullptr, nullptr, &hScardContext);
-		if (lResult != SCARD_S_SUCCESS) {
-			throw exception("Невозможно инициализировать контекст SCARDCONTEXT");
-		}
-	}
+    CardReader() : hScardContext() {
+        /* Начальная инициализация контекста для работы со смарт-картами */
+        LONG lResult = SCardEstablishContext(SCARD_SCOPE_USER, nullptr, nullptr, &hScardContext);
+        if (lResult != SCARD_S_SUCCESS) {
+            throw exception("Невозможно инициализировать контекст SCARDCONTEXT");
+        }
+    }
 
-	/* Получение списка считывателей в системе */
-	vector<wstring> getReadersList() const {
-		/* Получаем имена считывателей в системе */
-		/* Результат выполнения - кусок памяти, строки в котором записаны подряд, последняя строка - с двумя нулями */
-		LPWSTR pmszReaders = nullptr;
-		DWORD cch = SCARD_AUTOALLOCATE;
-		LONG lResult = SCardListReaders(hScardContext, SCARD_ALL_READERS, (LPWSTR)&pmszReaders, &cch);
-		if (lResult != SCARD_S_SUCCESS) {
-			cerr << "Не удалось считать доступные ридеры в системе" << endl;
-			return {};
-		}
+    /* Получение списка считывателей в системе */
+    vector<wstring> getReadersList() const {
+        /* Получаем имена считывателей в системе */
+        /* Результат выполнения - кусок памяти, строки в котором записаны подряд, последняя строка - с двумя нулями */
+        LPWSTR pmszReaders = nullptr;
+        DWORD cch = SCARD_AUTOALLOCATE;
+        LONG lResult = SCardListReaders(hScardContext, SCARD_ALL_READERS, (LPWSTR)&pmszReaders, &cch);
+        if (lResult != SCARD_S_SUCCESS) {
+            throw std::exception("Не удалось считать доступные ридеры в системе");
+        }
 
-		/* Записываем все считанные ридеры в вектор имён */
-		vector<wstring> readerNames = {};
-		LPWSTR pReader = pmszReaders;
-		if (!pReader) {
-			cerr << "Список доступных ридеров пуст" << endl;
-			return {};
-		}
-		while (*pReader != '\0') {
-			size_t readerNameLen = wcslen(pReader);
+        /* Записываем все считанные ридеры в вектор имён */
+        vector<wstring> readerNames = {};
+        LPWSTR pReader = pmszReaders;
+        if (!pReader) {
+            throw std::exception("Список доступных ридеров пуст");
+        }
 
-			/* Производим копирование названия во временную строку */
-			wstring tempString = L"";
-			tempString.append(pReader, readerNameLen);
+        while (*pReader != '\0') {
+            size_t readerNameLen = wcslen(pReader);
 
-			/* Которую затем добавляем в массив имён */
-			readerNames.push_back(tempString);
+            /* Производим копирование названия во временную строку */
+            wstring tempString = L"";
+            tempString.append(pReader, readerNameLen);
 
-			/* Смещаем считыватель, так как эти строки записаны подряд, разделитель - нулевой символ */
-			pReader = pReader + readerNameLen + 1;
-		}
+            /* Которую затем добавляем в массив имён */
+            readerNames.push_back(tempString);
 
-		/* Очищаем память из-под имён ридеров */
-		SCardFreeMemory(hScardContext, pmszReaders);
+            /* Смещаем считыватель, так как эти строки записаны подряд, разделитель - нулевой символ */
+            pReader = pReader + readerNameLen + 1;
+        }
 
-		/* Возвращаем вектор имён ридеров */
-		return readerNames;
-	}
+        /* Очищаем память из-под имён ридеров */
+        SCardFreeMemory(hScardContext, pmszReaders);
 
-	/* Функция выполнения соединения с картой */
-	SCARDHANDLE cardConnect(const wstring& readerName) const {
+        /* Возвращаем вектор имён ридеров */
+        return readerNames;
+    }
+
+    /* Функция выполнения соединения с картой */
+    SCARDHANDLE cardConnect(const wstring& readerName) const {
         SCARDHANDLE hCard = 0;
         DWORD dwAp = 0;
 
-		/* Непосредственно устанавливаем соединение по имени кардридера по протоколу T1 (бесконтактный) */
-		LONG lResult = SCardConnect(hScardContext, readerName.data(), SCARD_SHARE_EXCLUSIVE, SCARD_PROTOCOL_Tx, &hCard, &dwAp);
+        /* Непосредственно устанавливаем соединение по имени кардридера по протоколу T1 (бесконтактный) */
+        LONG lResult = SCardConnect(hScardContext, readerName.data(), SCARD_SHARE_EXCLUSIVE, SCARD_PROTOCOL_Tx, &hCard, &dwAp);
 
-		/* Если произошла ошибка или (вдруг) не тот протокол соединения */
-		/* То это выход */
-		if (lResult != SCARD_S_SUCCESS) {
-			cerr << "Не получилось выполнить соединение с картой!" << endl;
-			return 0;
-		}
-		if (dwAp != SCARD_PROTOCOL_T1) {
-			cerr << "Неверный протокол соединения" << endl;
-			return 0;
-		}
-		return hCard;
-	}
+        /* Если произошла ошибка или (вдруг) не тот протокол соединения */
+        /* То это выход */
+        if (lResult != SCARD_S_SUCCESS) {
+            throw std::exception("Не получилось выполнить соединение с картой!");
+        }
+        if (dwAp != SCARD_PROTOCOL_T1) {
+            throw std::exception("Неверный протокол соединения");
+        }
+        return hCard;
+    }
 
     /* Функция отключения карты */
-    bool cardDisconnect(SCARDHANDLE hCard) const {
-        return SCardDisconnect(hCard, SCARD_LEAVE_CARD) == SCARD_S_SUCCESS;
+    void cardDisconnect(SCARDHANDLE hCard) const {
+        SCardDisconnect(hCard, SCARD_LEAVE_CARD);
     }
 
 	/* Функция отправки команды */
@@ -218,7 +215,6 @@ public:
 	    
 		LONG lReturn = SCardTransmit(hCard, SCARD_PCI_T1, commandAPDU.data(), apduSize, nullptr, buffer.data(), &bufferSize);
 		if (lReturn != SCARD_S_SUCCESS) {
-			cerr << hex << lReturn << dec << endl;
 			throw std::exception(SCardGetErrorString(lReturn));
 		}
 
