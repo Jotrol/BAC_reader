@@ -208,7 +208,7 @@ namespace GUI {
 
 		/* Размеры главного окна */
 		const INT WIDTH = 920;
-		const INT HEIGHT = 515;
+		const INT HEIGHT = 530;
 
 		/* Название класса окна */
 		const wchar_t* CLASS_NAME = L"MainWindow";
@@ -250,7 +250,7 @@ namespace GUI {
 			WaitForSingleObject(hEvent, INFINITE);
 
 			/* Создаём главное окно */
-			hWnd = CreateWindow(CLASS_NAME, L"Главное окно", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, WIDTH, HEIGHT, nullptr, nullptr, hInst, nullptr);
+			hWnd = CreateWindow(CLASS_NAME, L"Главное окно", WS_OVERLAPPEDWINDOW & ~WS_THICKFRAME & ~WS_MAXIMIZEBOX, CW_USEDEFAULT, CW_USEDEFAULT, WIDTH, HEIGHT, nullptr, nullptr, hInst, nullptr);
 			if (!hWnd) {
 				throw std::exception("Ошибка: не удалось создать главное окно");
 			}
@@ -275,16 +275,16 @@ namespace GUI {
 			CREATE_EDIT_FIELD(L"Тип паспорта:", 20, 30, 120, hInfoBox, IDC_PASSPORT_TYPE);
 			CREATE_EDIT_FIELD(L"Код гос-ва:", 290, 30, 120, hInfoBox, IDC_COUNTRY_CODE);
 
-			CREATE_EDIT_FIELD(L"Номер паспорта:", 20, 60, 120, hInfoBox, IDC_PASSPORT_NUM);
+			CREATE_EDIT_FIELD(L"Номер паспорта:", 20, 70, 120, hInfoBox, IDC_PASSPORT_NUM);
 
-			CREATE_EDIT_FIELD(L"Фамилия:", 20, 100, 120, hInfoBox, IDC_PASSPORT_FAM);
-			CREATE_EDIT_FIELD(L"Имя:", 290, 100, 120, hInfoBox, IDC_PASSPORT_NAME);
+			CREATE_EDIT_FIELD(L"Фамилия:", 20, 110, 120, hInfoBox, IDC_PASSPORT_FAM);
+			CREATE_EDIT_FIELD(L"Имя:", 290, 110, 120, hInfoBox, IDC_PASSPORT_NAME);
 
-			CREATE_EDIT_FIELD(L"Гражданство:", 20, 140, 120, hInfoBox, IDC_PASSPORT_NAT);
-			CREATE_EDIT_FIELD(L"Пол:", 290, 140, 120, hInfoBox, IDC_PASSPORT_SEX);
+			CREATE_EDIT_FIELD(L"Гражданство:", 20, 150, 120, hInfoBox, IDC_PASSPORT_NAT);
+			CREATE_EDIT_FIELD(L"Пол:", 290, 150, 120, hInfoBox, IDC_PASSPORT_SEX);
 
-			CREATE_EDIT_FIELD(L"Дата рождения:", 20, 180, 120, hInfoBox, IDC_PASSPORT_BIRTH);
-			CREATE_EDIT_FIELD(L"Дата истечения:", 290, 180, 120, hInfoBox, IDC_PASSPORT_EXPIRES);
+			CREATE_EDIT_FIELD(L"Дата рождения:", 20, 190, 120, hInfoBox, IDC_PASSPORT_BIRTH);
+			CREATE_EDIT_FIELD(L"Дата истечения:", 290, 190, 120, hInfoBox, IDC_PASSPORT_EXPIRES);
 
 			/* Размещение ComboBox для выбора кардридера */
 			CreateWindow(L"BUTTON", L"Выберите кардридер", WS_CHILD | WS_VISIBLE | BS_GROUPBOX | BS_CENTER, 330, 250, 560, 60, hWnd, nullptr, hInst, nullptr);
@@ -297,11 +297,22 @@ namespace GUI {
 			/* Поле команд программы */
 			CreateWindow(L"BUTTON", L"Выберите действие", WS_CHILD | WS_VISIBLE | BS_GROUPBOX | BS_CENTER, 330, 370, 560, 60, hWnd, nullptr, hInst, nullptr);
 			CreateWindow(L"BUTTON", L"Считать", WS_CHILD | WS_VISIBLE | WS_BORDER, 350, 395, 160, 20, hWnd, (HMENU)IDC_BUTTON_LOAD, hInst, nullptr);
-			CreateWindow(L"BUTTON", L"О программе", WS_CHILD | WS_VISIBLE | WS_BORDER, 530, 395, 160, 20, hWnd, (HMENU)IDC_BUTTON_ABOUT, hInst, nullptr);
 			CreateWindow(L"BUTTON", L"Выход", WS_CHILD | WS_VISIBLE | WS_BORDER, 710, 395, 160, 20, hWnd, (HMENU)IDC_BUTTON_EXIT, hInst, nullptr);
 
 			/* Создать окно отображения прогресса */
 			hProgressBar = CreateWindow(PROGRESS_CLASS, L"", WS_CHILD | WS_VISIBLE, 20, 440, 870, 20, hWnd, nullptr, hInst, nullptr);
+
+			/* Создание меню окна */
+			HMENU hMainMenu = CreateMenu();
+			HMENU hMenuFile = CreatePopupMenu();
+			
+			AppendMenu(hMenuFile, MF_STRING, (UINT)IDC_BUTTON_LOAD, L"С&читать");
+			AppendMenu(hMenuFile, MF_STRING | MF_SEPARATOR, 0, L"");
+			AppendMenu(hMenuFile, MF_STRING, (UINT)IDC_BUTTON_EXIT, L"В&ыход");
+
+			AppendMenu(hMainMenu, MF_STRING | MF_POPUP, (UINT)hMenuFile, L"&Файл");
+			AppendMenu(hMainMenu, MF_STRING, (UINT)IDC_BUTTON_ABOUT, L"&О программе");
+			SetMenu(hWnd, hMainMenu);
 
 			/* Сохраняем в переменные окна указатель на текущий класс */
 			SetWindowLongPtr(hWnd, GWLP_USERDATA, (LONG_PTR)this);
@@ -493,7 +504,7 @@ namespace GUI {
 						readerName.resize(readerNameSize);
 
 						/* Получаем название ридера в строку */
-						SendMessage((HWND)msg.lParam, CB_GETLBTEXT, 0, (LPARAM)readerName.data());
+						SendMessage((HWND)msg.lParam, CB_GETLBTEXT, readerIndex, (LPARAM)readerName.data());
 					}
 					/* Если пришло сообщение на соединение с паспортом */
 					else if (msg.wParam == MainWindow::ThreadActions::Connect) {
