@@ -29,7 +29,7 @@ private:
 	Crypto::Sha1& sha1 = Crypto::getSha1Alg();
 
 public:
-	enum DGFILES { EFCOM, DG1, DG2, DG_COUNT };
+	enum DGFILES { DG1, DG2, DG_COUNT };
 
 private:
 	bool isConnectedViaBAC;
@@ -82,17 +82,14 @@ public:
 		/* Заполняем имена файлов групп данных */
 		dgFileName[DGFILES::DG1] = "DG1.bin";
 		dgFileName[DGFILES::DG2] = "DG2.bin";
-		dgFileName[DGFILES::EFCOM] = "EF_COM.bin";
 
 		/* Заполняем идентификаторы файлов */
 		dgID[DGFILES::DG1] = { 0x01, 0x01 };
 		dgID[DGFILES::DG2] = { 0x01, 0x02 };
-		dgID[DGFILES::EFCOM] = { 0x01, 0x1E };
 
 		/* Заполняем стартовые теги файлов */
 		dgTag[DGFILES::DG1] = 0x61;
 		dgTag[DGFILES::DG2] = 0x75;
-		dgTag[DGFILES::EFCOM] = 0x60;
 
 		/* Флаг говорящий о том, подключен соединен ли паспорт по BAC */
 		isConnectedViaBAC = false;
