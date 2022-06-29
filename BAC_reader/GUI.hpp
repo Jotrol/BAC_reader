@@ -250,7 +250,7 @@ namespace GUI {
 			WaitForSingleObject(hEvent, INFINITE);
 
 			/* Создаём главное окно */
-			hWnd = CreateWindow(CLASS_NAME, L"Главное окно", WS_OVERLAPPEDWINDOW & ~WS_THICKFRAME & ~WS_MAXIMIZEBOX, CW_USEDEFAULT, CW_USEDEFAULT, WIDTH, HEIGHT, nullptr, nullptr, hInst, nullptr);
+			hWnd = CreateWindow(CLASS_NAME, L"Считыватель документов по протоколу BAC", WS_OVERLAPPEDWINDOW & ~WS_THICKFRAME & ~WS_MAXIMIZEBOX, CW_USEDEFAULT, CW_USEDEFAULT, WIDTH, HEIGHT, nullptr, nullptr, hInst, nullptr);
 			if (!hWnd) {
 				throw std::exception("Ошибка: не удалось создать главное окно");
 			}
