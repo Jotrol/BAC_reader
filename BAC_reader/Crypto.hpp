@@ -91,19 +91,19 @@ namespace Crypto {
 			/* Получаем дескриптор алгоритма - инцициализируем его */
 			NTSTATUS ntStatus = BCryptOpenAlgorithmProvider(&hHashAlg, algName, nullptr, 0);
 			if (!BCRYPT_SUCCESS(ntStatus)) {
-				throw exception("Ошибка: не удалось инициализировать алгоритм хэширования");
+				throw exception("Не удалось инициализировать алгоритм хэширования");
 			}
 
 			/* Получаем размер контекста хэша */
 			ntStatus = BCryptGetProperty(hHashAlg, BCRYPT_OBJECT_LENGTH, (LPBYTE)&cbHashObject, sizeof(DWORD), &cbDataHash, 0);
 			if (!BCRYPT_SUCCESS(ntStatus)) {
-				throw exception("Ошибка: не удалось получить размер хэширующего объекта");
+				throw exception("Не удалось получить размер хэширующего объекта");
 			}
 
 			/* Получаем длину хэша, вырабатываемого алгоритмом */
 			ntStatus = BCryptGetProperty(hHashAlg, BCRYPT_HASH_LENGTH, (LPBYTE)&cbHashSize, sizeof(DWORD), &cbDataHash, 0);
 			if (!BCRYPT_SUCCESS(ntStatus)) {
-				throw exception("Ошибка: не удалось получить длину хэша");
+				throw exception("Не удалось получить длину хэша");
 			}
 		}
 
@@ -116,15 +116,14 @@ namespace Crypto {
 			/* Инициализируем новый контекс хэша */
 			NTSTATUS ntStatus = BCryptCreateHash(hHashAlg, &hHash, pbHashObject.get(), cbHashObject, nullptr, 0, 0);
 			if (!BCRYPT_SUCCESS(ntStatus)) {
-				throw exception("Ошибка: не удалось создать хэширующий алгоритм");
+				throw exception("Не удалось создать хэширующий алгоритм");
 			}
 
 			/* Выполнение хэширования */
 			ntStatus = BCryptHashData(hHash, copyData.data(), (ULONG)copyData.size(), 0);
 			if (!BCRYPT_SUCCESS(ntStatus)) {
-				cerr << "Ошибка: не удалось захэшировать данные" << endl;
 				BCryptDestroyHash(hHash);
-				return {};
+				throw exception("Не удалось захэшировать данные");
 			}
 
 			/* Выделяем вектор под размер хэша */
@@ -134,9 +133,8 @@ namespace Crypto {
 			/* Завершаем обсчёт хэша и сохраняем результат в выделенном ранее векторе */
 			ntStatus = BCryptFinishHash(hHash, hashedData.data(), cbHashSize, 0);
 			if (!BCRYPT_SUCCESS(ntStatus)) {
-				cerr << "Ошибка: не удалось завершить хэширование" << endl;
 				BCryptDestroyHash(hHash);
-				return {};
+				throw exception("Не удалось завершить хэширование");
 			}
 
 			/* Чистим конекст хэша в памяти */
@@ -197,8 +195,7 @@ namespace Crypto {
 			BCRYPT_KEY_HANDLE hKey = nullptr;
 			NTSTATUS ntStatus = BCryptGenerateSymmetricKey(hSymmetricAlg, &hKey, pbKeyObject.get(), cbKeyObject, keyCopy.data(), (ULONG)keyCopy.size(), 0);
 			if (!BCRYPT_SUCCESS(ntStatus)) {
-				cerr << "Ошибка: не удалось сгенерировать ключ шифрования" << endl;
-				return {};
+				throw exception("Не удалось сгенерировать ключ шифрования");
 			}
 
 			/* Создаём начальный вектор инициализации, заполненный нулями */
@@ -209,18 +206,16 @@ namespace Crypto {
 			vector<BYTE> dataCopy(data);
 			ntStatus = algFunctions[algAction](hKey, dataCopy.data(), (ULONG)dataCopy.size(), nullptr, pbIV.get(), cbBlockLen, nullptr, 0, &cbOutput, 0);
 			if (!BCRYPT_SUCCESS(ntStatus)) {
-				cerr << "Ошибка: не удалось узнать размер дешифрованных данных" << endl;
 				BCryptDestroyKey(hKey);
-				return {};
+				throw exception("Не удалось узнать размер дешифрованных данных");
 			}
 
 			/* Выполняем непосредственно шифрование/дешифрование */
 			vector<BYTE> pbOutput(cbOutput, 0);
 			ntStatus = algFunctions[algAction](hKey, dataCopy.data(), (ULONG)dataCopy.size(), nullptr, pbIV.get(), cbBlockLen, pbOutput.data(), cbOutput, &cbSymmetricData, 0);
 			if (!BCRYPT_SUCCESS(ntStatus)) {
-				cerr << "Ошибка: не удалось выполнить дешифрование" << endl;
 				BCryptDestroyKey(hKey);
-				return {};
+				throw exception("Не удалось выполнить дешифрование");
 			}
 
 			BCryptDestroyKey(hKey);
@@ -235,25 +230,25 @@ namespace Crypto {
 			/* Получаем дескриптор алгоритма шифрования */
 			NTSTATUS ntStatus = BCryptOpenAlgorithmProvider(&hSymmetricAlg, algName, nullptr, 0);
 			if (!BCRYPT_SUCCESS(ntStatus)) {
-				throw exception("Ошибка: не удалось инициализировать алгоритм шифрования");
+				throw exception("Не удалось инициализировать алгоритм шифрования");
 			}
 
 			/* Узнаем размер контекста для ключа */
 			ntStatus = BCryptGetProperty(hSymmetricAlg, BCRYPT_OBJECT_LENGTH, (LPBYTE)&cbKeyObject, sizeof(DWORD), &cbSymmetricData, 0);
 			if (!BCRYPT_SUCCESS(ntStatus)) {
-				throw exception("Ошибка: не удалось получить размер шифрующего объекта");
+				throw exception("Не удалось получить размер шифрующего объекта");
 			}
 
 			/* Узнаем длину блока алгоритма шифрования */
 			ntStatus = BCryptGetProperty(hSymmetricAlg, BCRYPT_BLOCK_LENGTH, (LPBYTE)&cbBlockLen, sizeof(DWORD), &cbSymmetricData, 0);
 			if (!BCRYPT_SUCCESS(ntStatus)) {
-				throw exception("Ошибка: не удалось получить размер блока шифрования");
+				throw exception("Не удалось получить размер блока шифрования");
 			}
 
 			/* Меняем режим шифрования на зацепление блоков (CBC) */
 			ntStatus = BCryptSetProperty(hSymmetricAlg, BCRYPT_CHAINING_MODE, (LPBYTE)algMode, sizeof(algMode), 0);
 			if (!BCRYPT_SUCCESS(ntStatus)) {
-				throw exception("Ошибка: не удалось изменить тип зацепления блоков шифрования");
+				throw exception("Не удалось изменить тип зацепления блоков шифрования");
 			}
 
 			/* Выделяем память для контекста ключа */
@@ -285,8 +280,7 @@ namespace Crypto {
 		vector<BYTE> getMAC(const vector<BYTE>& data, const vector<BYTE>& key) {
 			/* Если размер ключа не равен 16 байтам, то беда */
 			if (key.size() != 16) {
-				cerr << "Ошибка: длина ключа для Retail MAC должна быть равна 16 байтам" << endl;
-				return {};
+				throw exception("Длина ключа для Retail MAC должна быть равна 16 байтам");
 			}
 			
 			/* Заполняем данные по стандарту */

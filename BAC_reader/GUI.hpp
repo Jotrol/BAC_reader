@@ -25,6 +25,9 @@ namespace GUI {
 		/* Дескриптор окна */
 		HWND hWnd;
 
+		/* Кисть для отрисовки заднего фона */
+		HBRUSH hBgBrush;
+
 		/* Класс, который умеет декодировать изображения и выводить их RGB данные */
 		fipImage image;
 
@@ -33,16 +36,18 @@ namespace GUI {
 
 		/* Размеры окна для просмотра  */
 		const INT INIT_WIDTH = 300;
-		const INT INIT_HEIGHT = 400;
+		const INT INIT_HEIGHT = 410;
 
 		/* Класс окна просмотра изображения */
 		const wchar_t* CLASS_NAME = L"ImageWindow";
 		
 		/* Функция регистрации класса окна просмотра - без неё окно не создать */
 		bool RegisterImageWindowClass(HINSTANCE hInst) {
+			hBgBrush = CreateSolidBrush(RGB(240, 240, 240));
+
 			WNDCLASS wc = { 0 };
 			wc.hInstance = hInst;
-			wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+			wc.hbrBackground = (HBRUSH)hBgBrush;
 			wc.lpszClassName = CLASS_NAME;
 			wc.lpfnWndProc = ImageWndProc;
 
@@ -50,7 +55,7 @@ namespace GUI {
 		}
 	public:
 		/* Конструктор по умолчанию необходим для правильной инициализации внутри класса */
-		ImageWindow() : hWnd(nullptr), imagePos({ 0 }) {}
+		ImageWindow() : hWnd(nullptr), imagePos({ 0 }), hBgBrush(nullptr) {}
 
 		/* Функция создания окна просмотра */
 		bool create(HINSTANCE hInst, HWND hParent, INT X, INT Y) {
@@ -98,11 +103,12 @@ namespace GUI {
 				throw std::exception("Ошибка: не удалось конвертировать изображение");
 			}
 
+			/* Обрезаем изображение на чтобы оно по размеру было на 10 пикселей меньше выделенного окна */
+			image.crop(0, 0, INIT_WIDTH - 20, INIT_HEIGHT - 25);
+
 			/* Центрируем изображение внутри виджета */
 			imagePos.x = INIT_WIDTH / 2 - image.getWidth() / 2;
-			imagePos.y = INIT_HEIGHT / 2 - image.getHeight() / 2;
-
-			/* Если изображение превышает размера окна - обрезать */
+			imagePos.y = INIT_HEIGHT / 2 - image.getHeight() / 2 + 5;
 
 			/* Разрешаем показ изображения, подав указатель для обработчика */
 			SetWindowLongPtr(hWnd, GWLP_USERDATA, (LONG_PTR)this);
@@ -115,7 +121,7 @@ namespace GUI {
 		void drawImage() {
 			PAINTSTRUCT ps = { 0 };
 			HDC hdc = BeginPaint(hWnd, &ps);
-			FillRect(hdc, &ps.rcPaint, (HBRUSH)(COLOR_WINDOW + 1));
+			FillRect(hdc, &ps.rcPaint, hBgBrush);
 
 			/* Непосредственно отображение пикселей в 24-х битном формате на холсте окна */
 			SetDIBitsToDevice(hdc, imagePos.x, imagePos.y, image.getWidth(), image.getHeight(), 0, 0, 0, image.getHeight(), image.accessPixels(), (BITMAPINFO*)image.getInfoHeader(), DIB_RGB_COLORS);
@@ -157,19 +163,20 @@ namespace GUI {
 	
 	/* Идентификаторы кнопок и полей ввода */
 	#define IDC_BUTTON_LOAD 0x1000
-	#define IDC_BUTTON_CLEAR 0x1001
-	#define IDC_EDIT_MRZ 0x1002
-	#define IDC_INPUT_MRZ 0x1003
+	#define IDC_INPUT_MRZ 0x1001
 
-	#define IDC_PASSPORT_TYPE 0x1004
-	#define IDC_COUNTRY_CODE  0x1005
-	#define IDC_PASSPORT_NAME 0x1006
-	#define IDC_PASSPORT_FAM 0x1007
-	#define IDC_PASSPORT_NUM 0x1008
-	#define IDC_PASSPORT_NAT 0x1009
-	#define IDC_PASSPORT_BIRTH 0x100A
-	#define IDC_PASSPORT_SEX 0x100B
-	#define IDC_PASSPORT_EXPIRES 0x100C
+	#define IDC_PASSPORT_TYPE 0x1002
+	#define IDC_COUNTRY_CODE  0x1003
+	#define IDC_PASSPORT_NAME 0x1004
+	#define IDC_PASSPORT_FAM 0x1005
+	#define IDC_PASSPORT_NUM 0x1006
+	#define IDC_PASSPORT_NAT 0x1007
+	#define IDC_PASSPORT_BIRTH 0x1008
+	#define IDC_PASSPORT_SEX 0x1009
+	#define IDC_PASSPORT_EXPIRES 0x100A
+
+	#define IDC_BUTTON_ABOUT 0x100B
+	#define IDC_BUTTON_EXIT 0x100C
 
 	/* Функция-обработчик для главного окна */
 	LRESULT CALLBACK MainWindowProc(HWND, UINT, WPARAM, LPARAM);
@@ -184,6 +191,12 @@ namespace GUI {
 		/* Дескриптор созданного окна */
 		HWND hWnd;
 
+		/* Дескриптор для GroupBox данных паспорта */
+		HWND hInfoBox;
+
+		/* Дескриптор для ComboBox из имён доступных кардридеров */
+		HWND hReadersList;
+
 		/* Дескриптор для индикатора прогресса */
 		HWND hProgressBar;
 
@@ -194,17 +207,20 @@ namespace GUI {
 		DWORD passportConnectionThread;
 
 		/* Размеры главного окна */
-		const INT WIDTH = 745;
-		const INT HEIGHT = 505;
+		const INT WIDTH = 920;
+		const INT HEIGHT = 515;
 
 		/* Название класса окна */
 		const wchar_t* CLASS_NAME = L"MainWindow";
+
+		/* Строка "О программе" */
+		const wchar_t* ABOUT_STR = L"Программа написана в рамках производственной практики\nПрактикант: Ильичев Д.А.\nНаучный руководитель: Бонч-Бруевич М.А.";
 
 		/* Функция регистрации класса окна */
 		bool RegisterMainWindowClass(HINSTANCE hInst) {
 			WNDCLASS wc = { 0 };
 			wc.lpszClassName = CLASS_NAME;
-			wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+			wc.hbrBackground = (HBRUSH)CreateSolidBrush(RGB(240, 240, 240));
 			wc.hInstance = hInst;
 			wc.lpfnWndProc = MainWindowProc;
 
@@ -212,7 +228,7 @@ namespace GUI {
 		}
 	public:
 		/* Сообщения для взаимодействия с потоком чтения паспорта */
-		enum ThreadActions { SendMainHWND, SendProgHWND, Connect, ReadDG1, ReadDG2, Disconnect, Stop };
+		enum ThreadActions { SendMainHWND, SendProgHWND, GetReaders, SetReader, Connect, ReadDG1, ReadDG2, Disconnect, Stop };
 		enum ThreadResponces { ReadDG1End, ReadDG2End };
 
 		MainWindow(HINSTANCE hInst) : hWnd(nullptr) {
@@ -245,60 +261,47 @@ namespace GUI {
 			}
 
 			/* Вывода информации; игнорирую возможные ошибки не созданных окон */
-			DWORD widgetStyle = WS_CHILD | WS_VISIBLE | WS_BORDER;
+			DWORD textStyle = WS_CHILD | WS_VISIBLE | ES_RIGHT;
+			DWORD editStyle = WS_CHILD | WS_VISIBLE | WS_BORDER | ES_CENTER | ES_READONLY;
 
-			CreateWindow(L"BUTTON", L"Информация", WS_CHILD | WS_VISIBLE | BS_GROUPBOX | BS_CENTER, 330, 20, 385, 308, hWnd, nullptr, hInst, nullptr);
+			/* Небольшой макрос чтобы уменьшить объём кода ниже: просто создаёт текст: поле-ввода одинаковой длины */
+			/* Использует вышеуказанные стили и hInst */
+			#define CREATE_EDIT_FIELD(label, x, y, w, wnd, command) \
+					CreateWindow(L"STATIC", label, textStyle, x, y, w, 20, wnd, nullptr, hInst, nullptr);\
+					CreateWindow(L"EDIT", L"", editStyle, x + w + 10, y, w, 20, wnd, (HMENU)command, hInst, nullptr)\
 
-			CreateWindow(L"STATIC", L"Тип паспорта", widgetStyle, 360, 48, 93, 20, hWnd, nullptr, hInst, nullptr);
-			CreateWindow(L"EDIT", L"", widgetStyle, 360, 78, 93, 20, hWnd, (HMENU)IDC_PASSPORT_TYPE, hInst, nullptr);
+			/* Создание группы данных для отображения информации о паспорте */
+			hInfoBox = CreateWindow(L"BUTTON", L"Информация", WS_CHILD | WS_VISIBLE | BS_GROUPBOX | BS_CENTER, 330, 20, 560, 220, hWnd, nullptr, hInst, nullptr);
+			CREATE_EDIT_FIELD(L"Тип паспорта:", 20, 30, 120, hInfoBox, IDC_PASSPORT_TYPE);
+			CREATE_EDIT_FIELD(L"Код гос-ва:", 290, 30, 120, hInfoBox, IDC_COUNTRY_CODE);
 
-			CreateWindow(L"STATIC", L"Код гос-ва", widgetStyle, 483, 48, 76, 20, hWnd, nullptr, hInst, nullptr);
-			CreateWindow(L"EDIT", L"", widgetStyle, 483, 78, 76, 20, hWnd, (HMENU)IDC_COUNTRY_CODE, hInst, nullptr);
+			CREATE_EDIT_FIELD(L"Номер паспорта:", 20, 60, 120, hInfoBox, IDC_PASSPORT_NUM);
 
-			CreateWindow(L"STATIC", L"Номер паспорта", widgetStyle, 583, 48, 110, 20, hWnd, nullptr, hInst, nullptr);
-			CreateWindow(L"EDIT", L"", widgetStyle, 583, 78, 110, 20, hWnd, (HMENU)IDC_PASSPORT_NUM, hInst, nullptr);
+			CREATE_EDIT_FIELD(L"Фамилия:", 20, 100, 120, hInfoBox, IDC_PASSPORT_FAM);
+			CREATE_EDIT_FIELD(L"Имя:", 290, 100, 120, hInfoBox, IDC_PASSPORT_NAME);
 
-			CreateWindow(L"STATIC", L"Фамилия", widgetStyle, 360, 118, 150, 20, hWnd, nullptr, hInst, nullptr);
-			CreateWindow(L"EDIT", L"", widgetStyle, 360, 148, 150, 20, hWnd, (HMENU)IDC_PASSPORT_FAM, hInst, nullptr);
+			CREATE_EDIT_FIELD(L"Гражданство:", 20, 140, 120, hInfoBox, IDC_PASSPORT_NAT);
+			CREATE_EDIT_FIELD(L"Пол:", 290, 140, 120, hInfoBox, IDC_PASSPORT_SEX);
 
-			CreateWindow(L"STATIC", L"Имя", widgetStyle, 540, 118, 150, 20, hWnd, nullptr, hInst, nullptr);
-			CreateWindow(L"EDIT", L"", widgetStyle, 540, 148, 150, 20, hWnd, (HMENU)IDC_PASSPORT_NAME, hInst, nullptr);
+			CREATE_EDIT_FIELD(L"Дата рождения:", 20, 180, 120, hInfoBox, IDC_PASSPORT_BIRTH);
+			CREATE_EDIT_FIELD(L"Дата истечения:", 290, 180, 120, hInfoBox, IDC_PASSPORT_EXPIRES);
 
-			CreateWindow(L"STATIC", L"Гражданство", widgetStyle, 360, 188, 93, 20, hWnd, nullptr, hInst, nullptr);
-			CreateWindow(L"EDIT", L"", widgetStyle, 360, 218, 93, 20, hWnd, (HMENU)IDC_PASSPORT_NAT, hInst, nullptr);
-			
-			CreateWindow(L"STATIC", L"Пол", widgetStyle, 483, 188, 40, 20, hWnd, nullptr, hInst, nullptr);
-			CreateWindow(L"EDIT", L"", widgetStyle, 483, 218, 40, 20, hWnd, (HMENU)IDC_PASSPORT_SEX, hInst, nullptr);
+			/* Размещение ComboBox для выбора кардридера */
+			CreateWindow(L"BUTTON", L"Выберите кардридер", WS_CHILD | WS_VISIBLE | BS_GROUPBOX | BS_CENTER, 330, 250, 560, 60, hWnd, nullptr, hInst, nullptr);
+			hReadersList = CreateWindow(WC_COMBOBOX, L"", CBS_DROPDOWNLIST | CBS_HASSTRINGS | WS_CHILD | WS_VISIBLE, 350, 270, 520, 200, hWnd, nullptr, hInst, nullptr);
 
-			CreateWindow(L"STATIC", L"Дата рождения", widgetStyle, 360, 258, 110, 20, hWnd, nullptr, hInst, nullptr);
-			CreateWindow(L"EDIT", L"", widgetStyle, 360, 288, 110, 20, hWnd, (HMENU)IDC_PASSPORT_BIRTH, hInst, nullptr);
+			/* Поле ввода второй MRZ строки */
+			CreateWindow(L"BUTTON", L"Введите вторую строку MRZ", WS_CHILD | WS_VISIBLE | BS_GROUPBOX | BS_CENTER, 330, 310, 560, 60, hWnd, nullptr, hInst, nullptr);
+			CreateWindow(L"EDIT", L"", editStyle & ~ES_READONLY, 350, 330, 520, 20, hWnd, (HMENU)IDC_INPUT_MRZ, hInst, nullptr);
 
-			CreateWindow(L"STATIC", L"Дата истечения", widgetStyle, 500, 258, 110, 20, hWnd, nullptr, hInst, nullptr);
-			CreateWindow(L"EDIT", L"", widgetStyle, 500, 288, 110, 20, hWnd, (HMENU)IDC_PASSPORT_EXPIRES, hInst, nullptr);
-
-			/* Деактивируем все поля информации */
-			SendDlgItemMessage(hWnd, IDC_PASSPORT_TYPE, EM_SETREADONLY, TRUE, 0);
-			SendDlgItemMessage(hWnd, IDC_COUNTRY_CODE, EM_SETREADONLY, TRUE, 0);
-			SendDlgItemMessage(hWnd, IDC_PASSPORT_NUM, EM_SETREADONLY, TRUE, 0);
-			SendDlgItemMessage(hWnd, IDC_PASSPORT_FAM, EM_SETREADONLY, TRUE, 0);
-			SendDlgItemMessage(hWnd, IDC_PASSPORT_NAME, EM_SETREADONLY, TRUE, 0);
-			SendDlgItemMessage(hWnd, IDC_PASSPORT_NAT, EM_SETREADONLY, TRUE, 0);
-			SendDlgItemMessage(hWnd, IDC_PASSPORT_SEX, EM_SETREADONLY, TRUE, 0);
-			SendDlgItemMessage(hWnd, IDC_PASSPORT_BIRTH, EM_SETREADONLY, TRUE, 0);
-			SendDlgItemMessage(hWnd, IDC_PASSPORT_EXPIRES, EM_SETREADONLY, TRUE, 0);
-
-			/* Поле ввода второй MRZ строки, кнопки считывания и очистки */
-			CreateWindow(L"BUTTON", L"Ввод", WS_CHILD | WS_VISIBLE | BS_GROUPBOX | BS_CENTER, 330, 338, 385, 82, hWnd, nullptr, hInst, nullptr);
-			CreateWindow(L"EDIT", L"", widgetStyle, 340, 358, 375, 20, hWnd, (HMENU)IDC_INPUT_MRZ, hInst, nullptr);
-
-			CreateWindow(L"BUTTON", L"Считать", widgetStyle | BS_CENTER, 340, 388, 90, 20, hWnd, (HMENU)IDC_BUTTON_LOAD, hInst, nullptr);
-			CreateWindow(L"BUTTON", L"Очистить", widgetStyle | BS_CENTER, 450, 388, 90, 20, hWnd, (HMENU)IDC_BUTTON_CLEAR, hInst, nullptr);
+			/* Поле команд программы */
+			CreateWindow(L"BUTTON", L"Выберите действие", WS_CHILD | WS_VISIBLE | BS_GROUPBOX | BS_CENTER, 330, 370, 560, 60, hWnd, nullptr, hInst, nullptr);
+			CreateWindow(L"BUTTON", L"Считать", WS_CHILD | WS_VISIBLE | WS_BORDER, 350, 395, 160, 20, hWnd, (HMENU)IDC_BUTTON_LOAD, hInst, nullptr);
+			CreateWindow(L"BUTTON", L"О программе", WS_CHILD | WS_VISIBLE | WS_BORDER, 530, 395, 160, 20, hWnd, (HMENU)IDC_BUTTON_ABOUT, hInst, nullptr);
+			CreateWindow(L"BUTTON", L"Выход", WS_CHILD | WS_VISIBLE | WS_BORDER, 710, 395, 160, 20, hWnd, (HMENU)IDC_BUTTON_EXIT, hInst, nullptr);
 
 			/* Создать окно отображения прогресса */
-			hProgressBar = CreateWindow(PROGRESS_CLASS, L"", widgetStyle, 20, 435, 695, 20, hWnd, nullptr, hInst, nullptr);
-
-			/* Настройка элементов управления */
-			SendDlgItemMessage(hWnd, IDC_EDIT_MRZ, EM_SETREADONLY, TRUE, 0);
+			hProgressBar = CreateWindow(PROGRESS_CLASS, L"", WS_CHILD | WS_VISIBLE, 20, 440, 870, 20, hWnd, nullptr, hInst, nullptr);
 
 			/* Сохраняем в переменные окна указатель на текущий класс */
 			SetWindowLongPtr(hWnd, GWLP_USERDATA, (LONG_PTR)this);
@@ -306,6 +309,7 @@ namespace GUI {
 			/* Отправляем в поток общения с паспортом главное окно и окно индикатора загрузки */
 			PostThreadMessage(passportConnectionThread, WM_COMMAND, ThreadActions::SendMainHWND, (LPARAM)hWnd);
 			PostThreadMessage(passportConnectionThread, WM_COMMAND, ThreadActions::SendProgHWND, (LPARAM)hProgressBar);
+			PostThreadMessage(passportConnectionThread, WM_COMMAND, ThreadActions::GetReaders, (LPARAM)hReadersList);
 
 			/* Обновляем окно и делаем его видимым */
 			UpdateWindow(hWnd);
@@ -326,8 +330,13 @@ namespace GUI {
 			/* Выделяем массив на 100 символов для хранения введённого MRZ */
 			static char mrzStrRaw[100] = { 0 };
 
-			/* Если пришла команда "Закрыть" */
-			if (msg == WM_CLOSE) {
+			if (msg == WM_COMMAND && wParam == IDC_BUTTON_ABOUT) {
+				MessageBox(hWnd, ABOUT_STR, L"О программе", MB_OK | MB_ICONASTERISK);
+				return 0;
+			}
+
+			/* Если пришла команда "Закрыть" или нажали кнопку "Выход" */
+			if (msg == WM_CLOSE || (msg == WM_COMMAND && wParam == IDC_BUTTON_EXIT)) {
 				/* Сначала отправить в поток команду закрытия */
 				PostThreadMessage(passportConnectionThread, WM_COMMAND, (WPARAM)ThreadActions::Disconnect, 0);
 
@@ -346,11 +355,8 @@ namespace GUI {
 				/* 'A' потому что используются обычные строки */
 				LRESULT mrzLen = GetDlgItemTextA(hWnd, IDC_INPUT_MRZ, mrzStrRaw, sizeof(mrzStrRaw));
 
-				/* Если количество символов меньше 44, то ввели MRZ код не полностью (или вообще ввели) */
-				if (mrzLen < 44) {
-					MessageBox(hWnd, L"Вы ввели недостаточно символов.\nПожалуйста, проверьте ваш ввод", L"Ошибка", MB_OK | MB_ICONERROR);
-					return 0;
-				}
+				/* Выбираем кардридер */
+				PostThreadMessage(passportConnectionThread, WM_COMMAND, (WPARAM)ThreadActions::SetReader, (LPARAM)hReadersList);
 
 				/* Отправляем команды потоку чтения на соединение с картой */
 				PostThreadMessage(passportConnectionThread, WM_COMMAND, (WPARAM)ThreadActions::Connect, (LPARAM)mrzStrRaw);
@@ -363,19 +369,13 @@ namespace GUI {
 
 				/* На отключение паспорта */
 				PostThreadMessage(passportConnectionThread, WM_COMMAND, (WPARAM)ThreadActions::Disconnect, 0);
-
-				/* Очистить все поля */
-				SendMessage(hWnd, WM_COMMAND, IDC_BUTTON_CLEAR, 0);
-				return 0;
-			}
-
-			if (msg == WM_COMMAND && wParam == IDC_BUTTON_CLEAR) {
+				
 				/* Очистить текущее изображение */
 				imageWindow.clearImage();
 
 				/* Очистить все поля информации */
 				for (UINT16 i = IDC_PASSPORT_TYPE; i <= IDC_PASSPORT_EXPIRES; i += 1) {
-					SetDlgItemTextA(hWnd, i, "");
+					SetDlgItemTextA(hInfoBox, i, "");
 				}
 
 				return 0;
@@ -390,7 +390,7 @@ namespace GUI {
 
 				/* 'A' в конце потому что строки в ASCII */
 				for (INT i = 0; i < mrzDecoder.infoVec.size(); i += 1) {
-					SetDlgItemTextA(hWnd, IDC_PASSPORT_TYPE + i, mrzDecoder.infoVec[i].c_str());
+					SetDlgItemTextA(hInfoBox, IDC_PASSPORT_TYPE + i, mrzDecoder.infoVec[i].c_str());
 				}
 				
 				/* Ставим позицию на ноль в индикаторе прогресса */
@@ -446,10 +446,8 @@ namespace GUI {
 		/* И дескриптор окна прогресса */
 		HWND hProgressBar = nullptr;
 
-		/* Выбираем кард-ридер по умолчанию */
-		/* TODO: сделать так, чтобы пользователь мог ридер выбрать */
-		auto& readers = cardReader.getReadersList();
-		wstring readerName = readers[0];
+		/* Имя кардридера */
+		wstring readerName = L"";
 
 		/* Создаём очередь сообщений */
 		MSG msg = { 0 };
@@ -471,6 +469,31 @@ namespace GUI {
 					/* Если пришло сообщение получения окна прогресса */
 					else if (msg.wParam == MainWindow::ThreadActions::SendProgHWND) {
 						hProgressBar = (HWND)msg.lParam;
+					}
+					else if (msg.wParam == MainWindow::ThreadActions::GetReaders) {
+						/* Получаем список доступных системе кардридеров */
+						vector<wstring> readersList = cardReader.getReadersList();
+
+						/* Заполняем окошко выбора названиями этих ридеров */
+						for (const auto& reader : readersList) {
+							SendMessage((HWND)msg.lParam, CB_ADDSTRING, 0, (LPARAM)reader.c_str());
+						}
+
+						/* Устанавливаем первый ридер по умолчанию */
+						SendMessage((HWND)msg.lParam, CB_SETCURSEL, 0, 0);
+					}
+					else if (msg.wParam == MainWindow::ThreadActions::SetReader) {
+						/* Узнаем индекс выбранного ридера; сортировка в списке в окне отключена */
+						DWORD readerIndex = SendMessage((HWND)msg.lParam, CB_GETCURSEL, 0, 0);
+
+						/* Узнаём размер его названия (в символах) */
+						DWORD readerNameSize = SendMessage((HWND)msg.lParam, CB_GETLBTEXTLEN, readerIndex, 0);
+
+						/* Расширяем строку */
+						readerName.resize(readerNameSize);
+
+						/* Получаем название ридера в строку */
+						SendMessage((HWND)msg.lParam, CB_GETLBTEXT, 0, (LPARAM)readerName.data());
 					}
 					/* Если пришло сообщение на соединение с паспортом */
 					else if (msg.wParam == MainWindow::ThreadActions::Connect) {
@@ -500,6 +523,7 @@ namespace GUI {
 						memcpy(mrzStrRaw, mrzCode.data(), mrzCode.size());
 
 						/* Отправляем сообщение о том, что всё благополучно считалось */
+						if (!hWnd) { throw std::exception("Не был получен hWnd для потока паспорта"); }
 						SendMessage(hWnd, WM_COMMAND, MainWindow::ThreadResponces::ReadDG1End, 0);
 					}
 					/* Если пришло сообщение о том, что надо считать вторую группу данных */
@@ -522,7 +546,7 @@ namespace GUI {
 						imgContainerFile.seekg(0);
 
 						/* И отправляем сообщение о том, что всё считалось, плюс дескриптор открытого файла */
-						if (!hWnd) { throw std::exception("Ошибка: не был получен hWnd для потока паспорта"); }
+						if (!hWnd) { throw std::exception("Не был получен hWnd для потока паспорта"); }
 						SendMessage(hWnd, WM_COMMAND, MainWindow::ThreadResponces::ReadDG2End, (LPARAM)&imgContainerFile);
 					}
 					/* Если пришло сообщение об отключении паспорта */

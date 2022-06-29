@@ -268,7 +268,7 @@ namespace APDU {
 
 			/* Тег 0x8E всегда должен быть */
 			if (do8EIndex == -1) {
-				throw std::exception("Ошибка: SRAPDU получен без 0x8E");
+				throw std::exception("SRAPDU получен без 0x8E");
 			}
 
 			/* Составляем конкатенацию данных на основе того, какие теги найдены */
@@ -309,7 +309,6 @@ namespace APDU {
 				responceDO87DecodedData = des3.decrypt(responceDO87DecodedData, ksEnc);
 
 				/* Убираем заполнение */
-				/* TODO: попробовать вернуть просто поиск 0x80, мб всё будет работать ОК */
 				INT find0x80 = -1;
 				for (INT i = responceDO87DecodedData.size() - 1; i > -1; i -= 1) {
 					if (responceDO87DecodedData[i] == 0x80) {

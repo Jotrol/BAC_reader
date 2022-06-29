@@ -110,7 +110,7 @@ namespace BerTLV {
 
 				/* Пусть максимально можно будет задать 4 байта длиной */
 				if (lenBytes >= sizeof(berLen)) {
-					throw std::exception("Ошибка: длина данных больше, чем тип, способный её уместить");
+					throw std::exception("Длина данных больше, чем тип, способный её уместить");
 				}
 
 				/* Добавляем эти байты, пока не дошли до нуля */
@@ -239,7 +239,7 @@ namespace BerTLV {
 		ByteVec getTokenRaw(BerStream& file, UINT16 tokenIndex) {
 			/* Если каким-то образом индекс больше текущего размера массива */
 			if (tokenIndex > tokenSize) {
-				throw std::exception("Ошибка: нет токена с таким индексом");
+				throw std::exception("Нет токена с таким индексом");
 			}
 
 			/* Получаем начало этого токена */
